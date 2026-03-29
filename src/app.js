@@ -14,16 +14,52 @@ async function initFirebase() {
         const app = initializeApp(config);
         db = getFirestore(app, config.firestoreDatabaseId);
         
-        // Luôn hiển thị dữ liệu của ngày gần nhất có trong DB
-        const latestDate = await findLatestDate();
+        // Tính toán ngày mặc định dựa trên thời gian thực tế (Rule 20h)
+        const defaultDate = getDefaultDateByTime();
         
-        document.getElementById('global-date').value = latestDate;
-        document.getElementById('upload-date').value = latestDate;
+        // Kiểm tra xem ngày này có dữ liệu không, nếu không thì fallback về ngày gần nhất có trong DB
+        let finalDate = defaultDate;
+        const exists = await checkDataExists(defaultDate);
+        if (!exists) {
+            finalDate = await findLatestDate();
+        }
+        
+        document.getElementById('global-date').value = finalDate;
+        document.getElementById('upload-date').value = finalDate;
         
         setupAuthListeners();
     } catch (error) {
         console.error("Lỗi khởi tạo Firebase:", error);
         showNotification("Lỗi hệ thống", "Không thể kết nối đến cơ sở dữ liệu. Vui lòng kiểm tra cấu hình.", "error");
+    }
+}
+
+function getDefaultDateByTime() {
+    const now = new Date();
+    const hours = now.getHours();
+    
+    let targetDate = new Date(now);
+    if (hours < 20) {
+        // Trước 20h: Lấy ngày hôm trước
+        targetDate.setDate(now.getDate() - 1);
+    }
+    // Sau 20h: Lấy ngày hiện tại (mặc định)
+    
+    const year = targetDate.getFullYear();
+    const month = (targetDate.getMonth() + 1).toString().padStart(2, '0');
+    const day = targetDate.getDate().toString().padStart(2, '0');
+    
+    return `${year}-${month}-${day}`;
+}
+
+async function checkDataExists(dateStr) {
+    try {
+        const q = query(collection(db, 'gate_statistics'), where('date', '==', dateStr), limit(1));
+        const snapshot = await getDocs(q);
+        return !snapshot.empty;
+    } catch (error) {
+        console.error("Lỗi kiểm tra dữ liệu tồn tại:", error);
+        return false;
     }
 }
 
@@ -38,7 +74,7 @@ async function findLatestDate() {
     } catch (error) {
         console.error("Lỗi tìm ngày mới nhất:", error);
     }
-    return '2026-03-28'; // Mặc định nếu chưa có dữ liệu
+    return '2026-03-28'; // Mặc định nếu hoàn toàn chưa có dữ liệu
 }
 
 // --- AUTHENTICATION ---
