@@ -871,8 +871,15 @@ function renderGateDetails(gateName) {
     const ctx = document.getElementById('gate-line-chart').getContext('2d');
     if (gateLineChart) gateLineChart.destroy();
 
-    const hours = Object.keys(gateData.hourlyData).sort();
+    // Lấy tất cả các khung giờ từ toàn bộ dữ liệu để đồng bộ với dashboard
+    const allHoursSet = new Set();
+    currentGlobalData.forEach(g => {
+        Object.keys(g.hourlyData).forEach(hour => allHoursSet.add(hour));
+    });
+    const hours = Array.from(allHoursSet).sort();
+
     const passengerCounts = hours.map(hour => {
+        if (!gateData.hourlyData[hour]) return 0;
         return Object.values(gateData.hourlyData[hour]).reduce((sum, count) => sum + count, 0);
     });
 
