@@ -733,7 +733,7 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
         responsive: true,
         maintainAspectRatio: false,
         layout: {
-            padding: { top: 0, bottom: 0, left: 0, right: 0 }
+            padding: { top: 15, bottom: 15, left: 15, right: 15 }
         },
         plugins: {
             legend: {
@@ -743,7 +743,7 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
                     usePointStyle: true,
                     pointStyle: 'circle',
                     font: { size: 10, weight: '500' }, 
-                    padding: 8
+                    padding: 12
                 }
             },
             tooltip: {
@@ -761,7 +761,7 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
                 }
             }
         },
-        cutout: '65%'
+        cutout: '60%'
     };
 
     // Gate Pie Chart
