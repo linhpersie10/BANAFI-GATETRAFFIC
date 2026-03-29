@@ -13,6 +13,7 @@ service cloud.firestore {
     //   - gateName: string (required) - Name of the gate
     //   - totalPassengers: number (required) - Total passengers
     //   - hourlyData: map (required) - Map of Hour Bucket to Ticket Type to Count
+    //   - laneData: map (required) - Map of Lane Name to Count
     //   - updatedAt: string (required) - ISO 8601 timestamp
     //
     // ===============================================================
@@ -42,12 +43,13 @@ service cloud.firestore {
     }
 
     function isValidGateStatistic(data) {
-      return hasOnlyAllowedFields(['date', 'gateName', 'totalPassengers', 'hourlyData', 'updatedAt']) &&
-             hasRequiredFields(['date', 'gateName', 'totalPassengers', 'hourlyData', 'updatedAt']) &&
+      return hasOnlyAllowedFields(['date', 'gateName', 'totalPassengers', 'hourlyData', 'laneData', 'updatedAt']) &&
+             hasRequiredFields(['date', 'gateName', 'totalPassengers', 'hourlyData', 'laneData', 'updatedAt']) &&
              isValidDateString(data.date) &&
              data.gateName is string && data.gateName.size() > 0 && data.gateName.size() < 100 &&
              data.totalPassengers is number && data.totalPassengers >= 0 &&
              data.hourlyData is map &&
+             data.laneData is map &&
              isValidTimestampString(data.updatedAt);
     }
 

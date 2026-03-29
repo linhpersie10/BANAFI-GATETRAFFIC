@@ -623,7 +623,11 @@ async function aggregateAndUpload(rawData, targetDate) {
         }
 
         if (!aggregatedData[gateName].lanes[laneName]) {
-            aggregatedData[gateName].lanes[laneName] = 0;
+            aggregatedData[gateName].lanes[laneName] = {
+                count: 0,
+                minTime: null,
+                maxTime: null
+            };
         }
 
         // Lấy số lượng vé từ cột C (index 2)
@@ -635,8 +639,26 @@ async function aggregateAndUpload(rawData, targetDate) {
             }
         }
 
+        // Parse full date/time for lane operating time
+        let fullDateObj = null;
+        const originalRawTime = row[0];
+        if (typeof originalRawTime === 'number') {
+            fullDateObj = new Date((originalRawTime - (25567 + 2)) * 86400 * 1000);
+        } else if (originalRawTime) {
+            fullDateObj = new Date(originalRawTime);
+        }
+
+        if (fullDateObj && !isNaN(fullDateObj.getTime())) {
+            if (!aggregatedData[gateName].lanes[laneName].minTime || fullDateObj < aggregatedData[gateName].lanes[laneName].minTime) {
+                aggregatedData[gateName].lanes[laneName].minTime = fullDateObj;
+            }
+            if (!aggregatedData[gateName].lanes[laneName].maxTime || fullDateObj > aggregatedData[gateName].lanes[laneName].maxTime) {
+                aggregatedData[gateName].lanes[laneName].maxTime = fullDateObj;
+            }
+        }
+
         aggregatedData[gateName].hourly[hourBucket][ticketType] += quantity;
-        aggregatedData[gateName].lanes[laneName] += quantity;
+        aggregatedData[gateName].lanes[laneName].count += quantity;
         aggregatedData[gateName].total += quantity;
     });
 
@@ -683,12 +705,25 @@ async function uploadToFirestore(aggregatedData, targetDate) {
             const docId = `${targetDate}_${gateName.replace(/\s+/g, '')}`;
             const docRef = doc(db, 'gate_statistics', docId);
             
+            // Process lane data to include duration
+            const processedLanes = {};
+            Object.entries(data.lanes).forEach(([lane, stats]) => {
+                let durationMinutes = 0;
+                if (stats.minTime && stats.maxTime) {
+                    durationMinutes = Math.round((stats.maxTime - stats.minTime) / (1000 * 60));
+                }
+                processedLanes[lane] = {
+                    count: stats.count,
+                    duration: durationMinutes
+                };
+            });
+
             const payload = {
                 date: targetDate,
                 gateName: gateName,
                 totalPassengers: data.total,
                 hourlyData: data.hourly,
-                laneData: data.lanes || {},
+                laneData: processedLanes,
                 updatedAt: timestamp
             };
 
@@ -932,7 +967,7 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
         responsive: true,
         maintainAspectRatio: false,
         layout: {
-            padding: { top: 12, bottom: 12, left: 12, right: 12 }
+            padding: { top: 0, bottom: 0, left: 0, right: 0 }
         },
         plugins: {
             legend: {
@@ -946,14 +981,8 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
                     label: function(context) {
                         const label = context.label || '';
                         const value = context.raw || 0;
-                        
-                        // Calculate total based on visible slices only
-                        const meta = context.chart.getDatasetMeta(0);
-                        const total = meta.data.reduce((sum, element, index) => {
-                            return element.hidden ? sum : sum + context.dataset.data[index];
-                        }, 0);
-                        
-                        const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                        const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                        const percentage = ((value / total) * 100).toFixed(1);
                         return ` ${label}: ${value.toLocaleString('vi-VN')} (${percentage}%)`;
                     }
                 }
@@ -972,7 +1001,7 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
             labels: gateLabels,
             datasets: [{
                 data: gateData,
-                backgroundColor: gateData.map((_, i) => colors[i % colors.length]),
+                backgroundColor: colors,
                 borderWidth: 2,
                 borderColor: '#ffffff',
                 hoverOffset: 12
@@ -1000,7 +1029,7 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
             labels: hourLabelsShort,
             datasets: [{
                 data: hourData,
-                backgroundColor: hourData.map((_, i) => colors[i % colors.length]),
+                backgroundColor: colors,
                 borderWidth: 2,
                 borderColor: '#ffffff',
                 hoverOffset: 12
@@ -1028,7 +1057,7 @@ function generateCustomLegend(chartInstance, containerId) {
         const color = backgroundColors[index % backgroundColors.length];
         
         const legendItem = document.createElement('div');
-        legendItem.className = 'flex items-center gap-1.5 cursor-pointer hover:opacity-80 transition-opacity shrink-0';
+        legendItem.className = 'flex items-center gap-1.5 cursor-pointer hover:opacity-80 transition-opacity';
         
         // Optional: Add click to toggle dataset visibility if needed
         legendItem.onclick = () => {
@@ -1316,29 +1345,53 @@ function renderGateDetails(gateName) {
     }
 
     // 3. Cập nhật Bảng Cơ cấu Lane
-    const laneTotals = {};
+    const laneStats = {};
     dataToProcess.forEach(gateData => {
         if (gateData.laneData) {
-            Object.entries(gateData.laneData).forEach(([lane, count]) => {
+            Object.entries(gateData.laneData).forEach(([lane, stats]) => {
                 const displayLane = (!gateName || gateName === "") ? `${gateData.gateName} - ${lane}` : lane;
-                laneTotals[displayLane] = (laneTotals[displayLane] || 0) + count;
+                
+                if (!laneStats[displayLane]) {
+                    laneStats[displayLane] = { count: 0, duration: 0 };
+                }
+                
+                // If stats is an object (new format)
+                if (typeof stats === 'object' && stats !== null) {
+                    laneStats[displayLane].count += stats.count || 0;
+                    laneStats[displayLane].duration += stats.duration || 0;
+                } else {
+                    // Old format (just a number)
+                    laneStats[displayLane].count += stats || 0;
+                }
             });
         }
     });
 
-    const sortedLanes = Object.entries(laneTotals).sort((a, b) => b[1] - a[1]);
+    // Sắp xếp theo alphabet (Lane 01, Lane 02...)
+    const sortedLanes = Object.entries(laneStats).sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: 'base' }));
+    
     const laneTbody = document.getElementById('lane-table-body');
     laneTbody.innerHTML = '';
 
     if (sortedLanes.length === 0) {
-        laneTbody.innerHTML = '<tr><td colspan="2" class="px-4 py-3 text-center text-slate-500">Không có dữ liệu Lane</td></tr>';
+        laneTbody.innerHTML = '<tr><td colspan="3" class="px-4 py-3 text-center text-slate-500">Không có dữ liệu Lane</td></tr>';
     } else {
-        sortedLanes.forEach(([lane, count]) => {
+        sortedLanes.forEach(([lane, stats]) => {
             const tr = document.createElement('tr');
             tr.className = 'hover:bg-slate-50 transition-colors';
+            
+            // Format duration
+            let durationText = '---';
+            if (stats.duration > 0) {
+                const h = Math.floor(stats.duration / 60);
+                const m = stats.duration % 60;
+                durationText = h > 0 ? `${h}h ${m}m` : `${m}m`;
+            }
+
             tr.innerHTML = `
                 <td class="px-4 py-3 font-medium text-slate-700">${lane}</td>
-                <td class="px-4 py-3 text-right text-slate-600">${count.toLocaleString('vi-VN')}</td>
+                <td class="px-4 py-3 text-right text-slate-600">${stats.count.toLocaleString('vi-VN')}</td>
+                <td class="px-4 py-3 text-right text-slate-600">${durationText}</td>
             `;
             laneTbody.appendChild(tr);
         });
