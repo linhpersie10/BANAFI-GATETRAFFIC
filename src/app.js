@@ -3,6 +3,7 @@ import * as XLSX from 'https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs';
 import Chart from 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/auto/+esm';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js';
 import { getFirestore, collection, query, where, getDocs, writeBatch, doc, deleteDoc } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js';
+import config from '../firebase-applet-config.json';
 
 // --- FIREBASE INITIALIZATION ---
 let db;
@@ -10,8 +11,6 @@ let currentUser = null; // Custom auth state
 
 async function initFirebase() {
     try {
-        const response = await fetch('/firebase-applet-config.json');
-        const config = await response.json();
         const app = initializeApp(config);
         db = getFirestore(app, config.firestoreDatabaseId);
         
