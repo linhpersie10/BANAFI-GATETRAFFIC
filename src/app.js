@@ -577,15 +577,21 @@ async function aggregateAndUpload(rawData, targetDate) {
 
         if (!rawTime || !rawGate || !ticketType) return;
 
-        // 1. Bóc tách Khung giờ (Hour Bucket)
-        let hourStr = "00";
-        const timeMatch = rawTime.match(/(\d{1,2}):\d{2}/);
+        // 1. Bóc tách Khung giờ (30-minute Bucket)
+        let hourBucket = "00:00 - 01:00";
+        const timeMatch = rawTime.match(/(\d{1,2}):(\d{2})/);
         if (timeMatch) {
             const hour = parseInt(timeMatch[1], 10);
-            hourStr = hour.toString().padStart(2, '0');
+            const minute = parseInt(timeMatch[2], 10);
+            const hourStr = hour.toString().padStart(2, '0');
+            
+            if (minute < 30) {
+                hourBucket = `${hourStr}:00 - ${hourStr}:30`;
+            } else {
+                const nextHourStr = (hour + 1).toString().padStart(2, '0');
+                hourBucket = `${hourStr}:30 - ${nextHourStr}:00`;
+            }
         }
-        const nextHourStr = (parseInt(hourStr, 10) + 1).toString().padStart(2, '0');
-        const hourBucket = `${hourStr}:00 - ${nextHourStr}:00`;
 
         // 2. Bóc tách Tên Nhà Ga
         let gateName = "Unknown Gate";
@@ -930,7 +936,25 @@ function updateDashboardKPIs(selectedGateName) {
 
     // Cập nhật KPI Cards
     document.getElementById('kpi-total').textContent = totalPassengers.toLocaleString('vi-VN');
-    document.getElementById('kpi-peak-hour').textContent = peakHour;
+    
+    // Format peakHour for display (e.g., 08:00 - 08:30 -> 8h - 8h30)
+    let displayPeakHour = peakHour;
+    if (peakHour.includes(' - ')) {
+        const [start, end] = peakHour.split(' - ');
+        const startParts = start.split(':');
+        const startH = parseInt(startParts[0]);
+        const startM = startParts[1];
+        
+        const endParts = end.split(':');
+        const endH = parseInt(endParts[0]);
+        const endM = endParts[1];
+        
+        const startDisp = startM === '00' ? `${startH}h` : `${startH}h${startM}`;
+        const endDisp = endM === '00' ? `${endH}h` : `${endH}h${endM}`;
+        displayPeakHour = `${startDisp} - ${endDisp}`;
+    }
+    
+    document.getElementById('kpi-peak-hour').textContent = displayPeakHour;
     document.getElementById('kpi-peak-hour-count').textContent = `${maxHourCount.toLocaleString('vi-VN')} vé`;
     
     if (selectedGateName) {
@@ -967,7 +991,7 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
         responsive: true,
         maintainAspectRatio: false,
         layout: {
-            padding: { top: 0, bottom: 0, left: 0, right: 0 }
+            padding: { top: 5, bottom: 40, left: 45, right: 45 }
         },
         plugins: {
             legend: {
@@ -1092,8 +1116,20 @@ function renderDashboardChart(allHoursSet) {
     }
 
     // Sắp xếp các khung giờ theo thứ tự thời gian
-    const labels = Array.from(allHoursSet).sort();
+    const rawLabels = Array.from(allHoursSet).sort();
     
+    // Aggregate 30-min data to 1-hour for the dashboard to keep it "tinh gọn"
+    const hourlyLabels = [];
+    const hourlyDataMap = {}; // { gateName: { hourLabel: total } }
+
+    rawLabels.forEach(bucket => {
+        const hour = bucket.split(':')[0];
+        const hourLabel = parseInt(hour) + 'h';
+        if (!hourlyLabels.includes(hourLabel)) {
+            hourlyLabels.push(hourLabel);
+        }
+    });
+
     // Tạo mảng màu sắc ngẫu nhiên nhưng cố định cho các nhà ga
     const colors = [
         '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', 
@@ -1101,10 +1137,16 @@ function renderDashboardChart(allHoursSet) {
     ];
 
     const datasets = currentGlobalData.map((gateData, index) => {
-        const data = labels.map(hour => {
-            if (!gateData.hourlyData[hour]) return 0;
-            // Tính tổng vé trong giờ đó
-            return Object.values(gateData.hourlyData[hour]).reduce((sum, count) => sum + count, 0);
+        const data = hourlyLabels.map(hourLabel => {
+            let totalForHour = 0;
+            rawLabels.forEach(bucket => {
+                if (parseInt(bucket.split(':')[0]) + 'h' === hourLabel) {
+                    if (gateData.hourlyData[bucket]) {
+                        totalForHour += Object.values(gateData.hourlyData[bucket]).reduce((sum, count) => sum + count, 0);
+                    }
+                }
+            });
+            return totalForHour;
         });
 
         return {
@@ -1118,7 +1160,7 @@ function renderDashboardChart(allHoursSet) {
     dashboardChart = new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: labels,
+            labels: hourlyLabels,
             datasets: datasets
         },
         options: {
@@ -1270,9 +1312,15 @@ function renderGateDetails(gateName) {
     currentGlobalData.forEach(g => {
         Object.keys(g.hourlyData).forEach(hour => allHoursSet.add(hour));
     });
-    const hours = Array.from(allHoursSet).sort();
+    const rawHours = Array.from(allHoursSet).sort();
+    const displayHours = rawHours.map(h => {
+        const parts = h.split(':');
+        const hour = parseInt(parts[0]);
+        const minute = parts[1].split(' ')[0];
+        return minute === '00' ? `${hour}h` : `${hour}h${minute}`;
+    });
 
-    const passengerCounts = hours.map(hour => {
+    const passengerCounts = rawHours.map(hour => {
         let sumForHour = 0;
         dataToProcess.forEach(gateData => {
             if (gateData.hourlyData[hour]) {
@@ -1285,7 +1333,7 @@ function renderGateDetails(gateName) {
     gateLineChart = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: hours,
+            labels: displayHours,
             datasets: [{
                 label: chartLabel,
                 data: passengerCounts,
