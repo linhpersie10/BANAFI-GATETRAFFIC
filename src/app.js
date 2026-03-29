@@ -596,11 +596,21 @@ async function aggregateAndUpload(rawData, targetDate) {
             gateName = rawGate.split('-')[0].trim();
         }
 
+        // 2.5 Bóc tách Tên Lane
+        let laneName = "Unknown Lane";
+        const dashIndex = rawGate.indexOf('-');
+        if (dashIndex !== -1) {
+            laneName = rawGate.substring(dashIndex + 1).trim();
+        } else {
+            laneName = rawGate;
+        }
+
         // 3. Gom nhóm (Aggregation)
         if (!aggregatedData[gateName]) {
             aggregatedData[gateName] = {
                 total: 0,
-                hourly: {}
+                hourly: {},
+                lanes: {}
             };
         }
         
@@ -610,6 +620,10 @@ async function aggregateAndUpload(rawData, targetDate) {
         
         if (!aggregatedData[gateName].hourly[hourBucket][ticketType]) {
             aggregatedData[gateName].hourly[hourBucket][ticketType] = 0;
+        }
+
+        if (!aggregatedData[gateName].lanes[laneName]) {
+            aggregatedData[gateName].lanes[laneName] = 0;
         }
 
         // Lấy số lượng vé từ cột C (index 2)
@@ -622,6 +636,7 @@ async function aggregateAndUpload(rawData, targetDate) {
         }
 
         aggregatedData[gateName].hourly[hourBucket][ticketType] += quantity;
+        aggregatedData[gateName].lanes[laneName] += quantity;
         aggregatedData[gateName].total += quantity;
     });
 
@@ -673,6 +688,7 @@ async function uploadToFirestore(aggregatedData, targetDate) {
                 gateName: gateName,
                 totalPassengers: data.total,
                 hourlyData: data.hourly,
+                laneData: data.lanes || {},
                 updatedAt: timestamp
             };
 
@@ -916,18 +932,11 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
         responsive: true,
         maintainAspectRatio: false,
         layout: {
-            padding: { top: 15, bottom: 15, left: 15, right: 15 }
+            padding: { top: 12, bottom: 12, left: 12, right: 12 }
         },
         plugins: {
             legend: {
-                position: 'bottom',
-                labels: { 
-                    boxWidth: 8, 
-                    usePointStyle: true,
-                    pointStyle: 'circle',
-                    font: { size: 10, weight: '500' }, 
-                    padding: 12
-                }
+                display: false
             },
             tooltip: {
                 backgroundColor: 'rgba(15, 23, 42, 0.9)',
@@ -937,8 +946,14 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
                     label: function(context) {
                         const label = context.label || '';
                         const value = context.raw || 0;
-                        const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                        const percentage = ((value / total) * 100).toFixed(1);
+                        
+                        // Calculate total based on visible slices only
+                        const meta = context.chart.getDatasetMeta(0);
+                        const total = meta.data.reduce((sum, element, index) => {
+                            return element.hidden ? sum : sum + context.dataset.data[index];
+                        }, 0);
+                        
+                        const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
                         return ` ${label}: ${value.toLocaleString('vi-VN')} (${percentage}%)`;
                     }
                 }
@@ -957,7 +972,7 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
             labels: gateLabels,
             datasets: [{
                 data: gateData,
-                backgroundColor: colors,
+                backgroundColor: gateData.map((_, i) => colors[i % colors.length]),
                 borderWidth: 2,
                 borderColor: '#ffffff',
                 hoverOffset: 12
@@ -965,6 +980,8 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
         },
         options: commonOptions
     });
+    
+    generateCustomLegend(gatePieChart, 'gate-pie-legend');
 
     // Hour Pie Chart - Filtered from 08:00 to 17:00 (slots starting at 8 to 16)
     const filteredHours = Object.keys(hourlyTotals)
@@ -983,13 +1000,58 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
             labels: hourLabelsShort,
             datasets: [{
                 data: hourData,
-                backgroundColor: colors,
+                backgroundColor: hourData.map((_, i) => colors[i % colors.length]),
                 borderWidth: 2,
                 borderColor: '#ffffff',
                 hoverOffset: 12
             }]
         },
         options: commonOptions
+    });
+    
+    generateCustomLegend(hourPieChart, 'hour-pie-legend');
+}
+
+function generateCustomLegend(chartInstance, containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    
+    container.innerHTML = '';
+    
+    const data = chartInstance.data;
+    if (!data.labels.length || !data.datasets.length) return;
+    
+    const labels = data.labels;
+    const backgroundColors = data.datasets[0].backgroundColor;
+    
+    labels.forEach((label, index) => {
+        const color = backgroundColors[index % backgroundColors.length];
+        
+        const legendItem = document.createElement('div');
+        legendItem.className = 'flex items-center gap-1.5 cursor-pointer hover:opacity-80 transition-opacity shrink-0';
+        
+        // Optional: Add click to toggle dataset visibility if needed
+        legendItem.onclick = () => {
+            const meta = chartInstance.getDatasetMeta(0);
+            const currentHidden = meta.data[index].hidden;
+            meta.data[index].hidden = !currentHidden;
+            chartInstance.update();
+            legendItem.style.textDecoration = meta.data[index].hidden ? 'line-through' : 'none';
+            legendItem.style.opacity = meta.data[index].hidden ? '0.5' : '1';
+        };
+        
+        const colorBox = document.createElement('span');
+        colorBox.className = 'w-3 h-3 rounded-full flex-shrink-0';
+        colorBox.style.backgroundColor = color;
+        
+        const textLabel = document.createElement('span');
+        textLabel.className = 'font-medium text-slate-600';
+        textLabel.textContent = label;
+        
+        legendItem.appendChild(colorBox);
+        legendItem.appendChild(textLabel);
+        
+        container.appendChild(legendItem);
     });
 }
 
@@ -1241,18 +1303,46 @@ function renderGateDetails(gateName) {
     
     if (sortedTickets.length === 0) {
         tbody.innerHTML = '<tr><td colspan="2" class="px-4 py-3 text-center text-slate-500">Không có dữ liệu vé</td></tr>';
-        return;
+    } else {
+        sortedTickets.forEach(([type, count]) => {
+            const tr = document.createElement('tr');
+            tr.className = 'hover:bg-slate-50 transition-colors';
+            tr.innerHTML = `
+                <td class="px-4 py-3 font-medium text-slate-700">${type}</td>
+                <td class="px-4 py-3 text-right text-slate-600">${count.toLocaleString('vi-VN')}</td>
+            `;
+            tbody.appendChild(tr);
+        });
     }
 
-    sortedTickets.forEach(([type, count]) => {
-        const tr = document.createElement('tr');
-        tr.className = 'hover:bg-slate-50 transition-colors';
-        tr.innerHTML = `
-            <td class="px-4 py-3 font-medium text-slate-700">${type}</td>
-            <td class="px-4 py-3 text-right text-slate-600">${count.toLocaleString('vi-VN')}</td>
-        `;
-        tbody.appendChild(tr);
+    // 3. Cập nhật Bảng Cơ cấu Lane
+    const laneTotals = {};
+    dataToProcess.forEach(gateData => {
+        if (gateData.laneData) {
+            Object.entries(gateData.laneData).forEach(([lane, count]) => {
+                const displayLane = (!gateName || gateName === "") ? `${gateData.gateName} - ${lane}` : lane;
+                laneTotals[displayLane] = (laneTotals[displayLane] || 0) + count;
+            });
+        }
     });
+
+    const sortedLanes = Object.entries(laneTotals).sort((a, b) => b[1] - a[1]);
+    const laneTbody = document.getElementById('lane-table-body');
+    laneTbody.innerHTML = '';
+
+    if (sortedLanes.length === 0) {
+        laneTbody.innerHTML = '<tr><td colspan="2" class="px-4 py-3 text-center text-slate-500">Không có dữ liệu Lane</td></tr>';
+    } else {
+        sortedLanes.forEach(([lane, count]) => {
+            const tr = document.createElement('tr');
+            tr.className = 'hover:bg-slate-50 transition-colors';
+            tr.innerHTML = `
+                <td class="px-4 py-3 font-medium text-slate-700">${lane}</td>
+                <td class="px-4 py-3 text-right text-slate-600">${count.toLocaleString('vi-VN')}</td>
+            `;
+            laneTbody.appendChild(tr);
+        });
+    }
 }
 
 // Khởi chạy ứng dụng

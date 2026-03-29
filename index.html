@@ -38,6 +38,8 @@
                 padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
             }
         }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans h-screen flex flex-col md:flex-row overflow-hidden">
@@ -193,7 +195,7 @@
                 <!-- Main Charts Section -->
                 <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
                     <!-- Left Column: Bar Chart (Priority) -->
-                    <div class="lg:col-span-9 bg-white rounded-xl p-6 shadow-sm border border-slate-200/60 flex flex-col h-[664px]">
+                    <div class="lg:col-span-9 bg-white rounded-xl p-6 shadow-sm border border-slate-200/60 flex flex-col h-[600px]">
                         <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6">Lưu lượng khách theo khung giờ</h3>
                         <div class="flex-1 w-full relative">
                             <canvas id="dashboard-chart"></canvas>
@@ -202,17 +204,19 @@
 
                     <!-- Right Column: Pie Charts (Approx 30%) -->
                     <div class="lg:col-span-3 space-y-6">
-                        <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60 flex flex-col h-[320px]">
-                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 px-2">Cơ cấu theo Nhà Ga</h3>
+                        <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60 flex flex-col h-72">
+                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 px-2">Cơ cấu theo Nhà Ga</h3>
                             <div class="flex-1 w-full relative">
                                 <canvas id="gate-pie-chart"></canvas>
                             </div>
+                            <div id="gate-pie-legend" class="flex flex-row overflow-x-auto whitespace-nowrap gap-4 w-full py-2 text-xs scrollbar-hide"></div>
                         </div>
-                        <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60 flex flex-col h-[320px]">
-                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 px-2">Cơ cấu theo Khung giờ</h3>
+                        <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60 flex flex-col h-72">
+                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 px-2">Cơ cấu theo Khung giờ</h3>
                             <div class="flex-1 w-full relative">
                                 <canvas id="hour-pie-chart"></canvas>
                             </div>
+                            <div id="hour-pie-legend" class="flex flex-row overflow-x-auto whitespace-nowrap gap-4 w-full py-2 text-xs scrollbar-hide"></div>
                         </div>
                     </div>
                 </div>
@@ -249,6 +253,26 @@
                                     </tr>
                                 </thead>
                                 <tbody id="ticket-table-body" class="divide-y divide-slate-200">
+                                    <tr><td colspan="2" class="px-4 py-3 text-center text-slate-500">Chưa có dữ liệu</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Lane Statistics -->
+                <div class="grid grid-cols-1 gap-6">
+                    <div class="bg-white rounded-xl p-6 shadow-sm border border-slate-100 flex flex-col max-h-[400px]">
+                        <h3 class="text-lg font-bold text-slate-800 mb-4">Lưu lượng theo Lane (Cổng phụ)</h3>
+                        <div class="flex-1 overflow-auto border border-slate-200 rounded-lg">
+                            <table class="w-full text-sm text-left">
+                                <thead class="text-xs text-slate-700 uppercase bg-slate-50 sticky top-0">
+                                    <tr>
+                                        <th class="px-4 py-3">Tên Lane</th>
+                                        <th class="px-4 py-3 text-right">Số lượng khách</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="lane-table-body" class="divide-y divide-slate-200">
                                     <tr><td colspan="2" class="px-4 py-3 text-center text-slate-500">Chưa có dữ liệu</td></tr>
                                 </tbody>
                             </table>
