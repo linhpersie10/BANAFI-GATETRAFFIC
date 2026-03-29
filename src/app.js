@@ -197,9 +197,10 @@ window.switchTab = function(tabId) {
     const titles = {
         'dashboard': 'Tổng quan hệ thống',
         'gate-details': 'Chi tiết Nhà Ga',
+        'productivity': 'Báo cáo năng suất nhân sự',
         'data-entry': 'Quản lý Dữ liệu'
     };
-    document.getElementById('page-title').textContent = titles[tabId];
+    document.getElementById('page-title').textContent = titles[tabId] || 'Hệ thống BNC';
     
     // Refresh charts if needed
     if (tabId === 'dashboard' && dashboardChart) {
@@ -1261,8 +1262,11 @@ function renderDashboardChart(allHoursSet) {
 // --- GATE DETAILS LOGIC ---
 function updateGateSelector() {
     const selector = document.getElementById('gate-selector');
+    const prodSelector = document.getElementById('productivity-gate-selector');
+    
     // Giữ lại option mặc định
     selector.innerHTML = '<option value="">-- Chọn nhà ga --</option>';
+    if (prodSelector) prodSelector.innerHTML = '<option value="">-- Chọn nhà ga --</option>';
     
     // Sắp xếp tên nhà ga theo thứ tự alphabet
     const gateNames = currentGlobalData.map(d => d.gateName).sort();
@@ -1272,6 +1276,11 @@ function updateGateSelector() {
         option.value = name;
         option.textContent = name;
         selector.appendChild(option);
+        
+        if (prodSelector) {
+            const prodOption = option.cloneNode(true);
+            prodSelector.appendChild(prodOption);
+        }
     });
 
     // Tự động chọn "Tất cả nhà ga" (giá trị rỗng) làm mặc định
@@ -1445,6 +1454,114 @@ function renderGateDetails(gateName) {
         });
     }
 }
+
+// --- PRODUCTIVITY LOGIC ---
+const TASKFORCES = {
+    'soat-ve': { name: 'Soát vé', kpiLabel: 'Tỷ lệ chính xác', unit: '%' },
+    'sai-sot': { name: 'Phát hiện sai sót', kpiLabel: 'Số lỗi phát hiện', unit: ' lỗi' },
+    'tu-van': { name: 'Tư vấn khách hàng', kpiLabel: 'Điểm hài lòng', unit: '/5' },
+    'dieu-phoi': { name: 'Điều phối luồng khách', kpiLabel: 'Điểm lưu thông', unit: '/100' }
+};
+
+function renderProductivityTable() {
+    const gateName = document.getElementById('productivity-gate-selector').value;
+    const tbody = document.getElementById('productivity-table-body');
+    
+    if (!gateName) {
+        tbody.innerHTML = '<tr><td colspan="4" class="px-6 py-12 text-center text-slate-500"><div class="flex flex-col items-center gap-2"><i class="fas fa-info-circle text-2xl text-slate-300"></i><p>Vui lòng chọn nhà ga để xem báo cáo năng suất</p></div></td></tr>';
+        return;
+    }
+
+    const gateData = currentGlobalData.find(d => d.gateName === gateName);
+    if (!gateData) return;
+
+    // Get selected taskforces
+    const selectedTaskforces = Array.from(document.querySelectorAll('input[name="taskforce"]:checked')).map(cb => cb.value);
+    
+    if (selectedTaskforces.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="px-6 py-12 text-center text-slate-500"><div class="flex flex-col items-center gap-2"><i class="fas fa-exclamation-circle text-2xl text-slate-300"></i><p>Vui lòng chọn ít nhất một Taskforce</p></div></td></tr>';
+        return;
+    }
+
+    // Determine number of employees based on lanes
+    const laneCount = gateData.laneData ? Object.keys(gateData.laneData).length : 4;
+    const employeeCount = Math.max(laneCount, 3); // At least 3 employees
+
+    tbody.innerHTML = '';
+
+    for (let i = 1; i <= employeeCount; i++) {
+        const empName = `Nhân viên ${i.toString().padStart(2, '0')}`;
+        
+        selectedTaskforces.forEach(tfKey => {
+            const tf = TASKFORCES[tfKey];
+            const kpiValue = generateMockKPI(tfKey, i);
+            const status = getKPIStatus(tfKey, kpiValue);
+            
+            const tr = document.createElement('tr');
+            tr.className = 'hover:bg-slate-50 transition-colors';
+            tr.innerHTML = `
+                <td class="px-6 py-4 font-medium text-slate-700">${empName}</td>
+                <td class="px-6 py-4 text-center">
+                    <span class="px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-600 border border-indigo-100">
+                        ${tf.name}
+                    </span>
+                </td>
+                <td class="px-6 py-4 text-right font-bold text-slate-800">
+                    ${kpiValue}${tf.unit}
+                </td>
+                <td class="px-6 py-4 text-center">
+                    <span class="px-2.5 py-1 rounded-full text-xs font-bold ${status.class}">
+                        ${status.text}
+                    </span>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+}
+
+function generateMockKPI(tfKey, index) {
+    // Use index to make it somewhat stable
+    const seed = index * 10;
+    const rand = (Math.sin(seed) + 1) / 2; // 0 to 1
+    
+    switch(tfKey) {
+        case 'soat-ve': return (95 + rand * 4.9).toFixed(1);
+        case 'sai-sot': return Math.floor(5 + rand * 15);
+        case 'tu-van': return (4.2 + rand * 0.8).toFixed(1);
+        case 'dieu-phoi': return Math.floor(80 + rand * 20);
+        default: return 0;
+    }
+}
+
+function getKPIStatus(tfKey, value) {
+    const val = parseFloat(value);
+    switch(tfKey) {
+        case 'soat-ve': 
+            if (val >= 98) return { text: 'Xuất sắc', class: 'bg-emerald-50 text-emerald-600 border border-emerald-100' };
+            if (val >= 96) return { text: 'Tốt', class: 'bg-blue-50 text-blue-600 border border-blue-100' };
+            return { text: 'Đạt', class: 'bg-amber-50 text-amber-600 border border-amber-100' };
+        case 'sai-sot':
+            if (val >= 15) return { text: 'Xuất sắc', class: 'bg-emerald-50 text-emerald-600 border border-emerald-100' };
+            if (val >= 10) return { text: 'Tốt', class: 'bg-blue-50 text-blue-600 border border-blue-100' };
+            return { text: 'Đạt', class: 'bg-amber-50 text-amber-600 border border-amber-100' };
+        case 'tu-van':
+            if (val >= 4.8) return { text: 'Xuất sắc', class: 'bg-emerald-50 text-emerald-600 border border-emerald-100' };
+            if (val >= 4.5) return { text: 'Tốt', class: 'bg-blue-50 text-blue-600 border border-blue-100' };
+            return { text: 'Đạt', class: 'bg-amber-50 text-amber-600 border border-amber-100' };
+        case 'dieu-phoi':
+            if (val >= 95) return { text: 'Xuất sắc', class: 'bg-emerald-50 text-emerald-600 border border-emerald-100' };
+            if (val >= 85) return { text: 'Tốt', class: 'bg-blue-50 text-blue-600 border border-blue-100' };
+            return { text: 'Đạt', class: 'bg-amber-50 text-amber-600 border border-amber-100' };
+        default: return { text: 'N/A', class: 'bg-slate-50 text-slate-600 border border-slate-100' };
+    }
+}
+
+// Event Listeners for Productivity
+document.getElementById('productivity-gate-selector')?.addEventListener('change', renderProductivityTable);
+document.querySelectorAll('input[name="taskforce"]').forEach(cb => {
+    cb.addEventListener('change', renderProductivityTable);
+});
 
 // Khởi chạy ứng dụng
 initFirebase();

@@ -1,1 +1,54 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
 @import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --color-peach: #FFBE98;
+  --color-peach-dark: #F0A981;
+  --color-ink: #1A1A1A;
+  --color-muted: #5E5E5E;
+  --color-soft: #A89F9A;
+  --color-paper: #FAFAFA;
+}
+
+@layer base {
+  body {
+    @apply bg-white text-ink font-sans antialiased;
+  }
+}
+
+/* Custom styles for editorial look */
+.editorial-card {
+  @apply bg-white border border-gray-200 rounded-none p-8 transition-all;
+}
+
+.editorial-card-accent {
+  @apply border-b-4 border-peach;
+}
+
+.kpi-value {
+  @apply text-5xl font-light tracking-tighter text-ink;
+}
+
+.section-title {
+  @apply text-sm font-medium tracking-[0.2em] uppercase text-soft mb-6;
+}
+
+.btn-primary {
+  @apply bg-peach text-ink hover:bg-peach-dark transition-colors rounded-none px-8 py-3 uppercase text-xs tracking-[0.15em] font-semibold inline-flex items-center justify-center;
+}
+
+.btn-secondary {
+  @apply bg-white border border-gray-200 text-ink hover:bg-gray-50 transition-colors rounded-none px-8 py-3 uppercase text-xs tracking-[0.15em] font-semibold inline-flex items-center justify-center;
+}
+
+/* Hide scrollbar but keep functionality */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Custom Chart Tooltip styling could be added here if needed */

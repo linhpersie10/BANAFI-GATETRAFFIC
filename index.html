@@ -74,6 +74,10 @@
                     <i class="fas fa-door-open w-5 text-center"></i>
                     <span>Chi tiết Nhà Ga</span>
                 </button>
+                <button onclick="switchTab('productivity')" id="nav-productivity" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-white transition-all text-left font-medium">
+                    <i class="fas fa-user-tie w-5 text-center"></i>
+                    <span>Báo cáo năng suất</span>
+                </button>
                 <button onclick="switchTab('data-entry')" id="nav-data-entry" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-white transition-all text-left font-medium">
                     <i class="fas fa-database w-5 text-center"></i>
                     <span>Quản lý Dữ liệu</span>
@@ -286,7 +290,72 @@
                 </div>
             </div>
 
-            <!-- TAB 3: DATA ENTRY -->
+            <!-- TAB 3: PRODUCTIVITY REPORT -->
+            <div id="tab-productivity" class="tab-content hidden space-y-6">
+                <div class="bg-white rounded-xl p-6 shadow-sm border border-slate-200/60">
+                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
+                        <div>
+                            <h3 class="text-xl font-bold text-slate-800">Báo cáo năng suất nhân sự</h3>
+                            <p class="text-sm text-slate-500 mt-1">Theo dõi KPI hiệu suất theo từng Taskforce</p>
+                        </div>
+                        <div class="flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-xl border border-slate-200">
+                            <label class="text-sm font-semibold text-slate-600">Nhà Ga:</label>
+                            <select id="productivity-gate-selector" class="bg-transparent border-none outline-none text-slate-700 font-bold cursor-pointer min-w-[160px]">
+                                <option value="">-- Chọn nhà ga --</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Taskforce Selection -->
+                    <div class="bg-indigo-50/50 rounded-xl p-5 border border-indigo-100/50 mb-8">
+                        <p class="text-xs font-bold text-indigo-600 uppercase tracking-widest mb-4">Chọn Taskforce để theo dõi</p>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                            <label class="flex items-center gap-3 p-3 bg-white rounded-lg border border-slate-200 cursor-pointer hover:border-indigo-300 transition-colors group">
+                                <input type="checkbox" name="taskforce" value="soat-ve" checked class="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500">
+                                <span class="text-sm font-medium text-slate-700 group-hover:text-indigo-600">Soát vé</span>
+                            </label>
+                            <label class="flex items-center gap-3 p-3 bg-white rounded-lg border border-slate-200 cursor-pointer hover:border-indigo-300 transition-colors group">
+                                <input type="checkbox" name="taskforce" value="sai-sot" checked class="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500">
+                                <span class="text-sm font-medium text-slate-700 group-hover:text-indigo-600">Phát hiện sai sót</span>
+                            </label>
+                            <label class="flex items-center gap-3 p-3 bg-white rounded-lg border border-slate-200 cursor-pointer hover:border-indigo-300 transition-colors group">
+                                <input type="checkbox" name="taskforce" value="tu-van" checked class="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500">
+                                <span class="text-sm font-medium text-slate-700 group-hover:text-indigo-600">Tư vấn khách hàng</span>
+                            </label>
+                            <label class="flex items-center gap-3 p-3 bg-white rounded-lg border border-slate-200 cursor-pointer hover:border-indigo-300 transition-colors group">
+                                <input type="checkbox" name="taskforce" value="dieu-phoi" checked class="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500">
+                                <span class="text-sm font-medium text-slate-700 group-hover:text-indigo-600">Điều phối luồng khách</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Productivity Table -->
+                    <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                        <table class="w-full text-sm text-left">
+                            <thead class="text-xs text-slate-700 uppercase bg-slate-50 border-b border-slate-200">
+                                <tr>
+                                    <th class="px-6 py-4 font-bold">Nhân viên</th>
+                                    <th class="px-6 py-4 font-bold text-center">Taskforce</th>
+                                    <th class="px-6 py-4 font-bold text-right">Hiệu suất (KPI)</th>
+                                    <th class="px-6 py-4 font-bold text-center">Trạng thái</th>
+                                </tr>
+                            </thead>
+                            <tbody id="productivity-table-body" class="divide-y divide-slate-200">
+                                <tr>
+                                    <td colspan="4" class="px-6 py-12 text-center text-slate-500">
+                                        <div class="flex flex-col items-center gap-2">
+                                            <i class="fas fa-info-circle text-2xl text-slate-300"></i>
+                                            <p>Vui lòng chọn nhà ga để xem báo cáo năng suất</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 4: DATA ENTRY -->
             <div id="tab-data-entry" class="tab-content hidden max-w-3xl mx-auto">
                 <div class="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
                     <div class="p-6 border-b border-slate-100 bg-slate-50">
@@ -352,6 +421,10 @@
         <button onclick="switchTab('gate-details')" id="nav-mobile-gate-details" class="flex-1 flex flex-col items-center gap-1 py-3 text-slate-400 hover:text-slate-600 transition-colors">
             <i class="fas fa-door-open text-lg"></i>
             <span class="text-[10px] font-medium">Nhà Ga</span>
+        </button>
+        <button onclick="switchTab('productivity')" id="nav-mobile-productivity" class="flex-1 flex flex-col items-center gap-1 py-3 text-slate-400 hover:text-slate-600 transition-colors">
+            <i class="fas fa-user-tie text-lg"></i>
+            <span class="text-[10px] font-medium">Năng suất</span>
         </button>
         <button onclick="switchTab('data-entry')" id="nav-mobile-data-entry" class="flex-1 flex flex-col items-center gap-1 py-3 text-slate-400 hover:text-slate-600 transition-colors">
             <i class="fas fa-database text-lg"></i>
