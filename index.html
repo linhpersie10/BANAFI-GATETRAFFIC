@@ -297,7 +297,11 @@
                         </div>
 
                         <!-- Action Button -->
-                        <div class="pt-4 border-t border-slate-100 flex justify-end">
+                        <div class="pt-4 border-t border-slate-100 flex justify-between items-center">
+                            <button id="delete-data-btn" class="text-rose-600 hover:text-rose-700 font-medium text-sm flex items-center gap-2 px-4 py-2.5 rounded-lg hover:bg-rose-50 transition hidden">
+                                <i class="fas fa-trash-alt"></i>
+                                <span>Xóa dữ liệu ngày này</span>
+                            </button>
                             <button id="process-btn" disabled class="bg-blue-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                                 <i class="fas fa-upload"></i>
                                 <span id="process-btn-text">Upload Dữ liệu</span>
@@ -326,8 +330,49 @@
         </button>
     </nav>
 
-    <!-- Application Logic -->
-    <script type="module" src="/src/app.js"></script>
-</body>
+        <!-- Application Logic -->
+        <script type="module" src="/src/app.js"></script>
+
+        <!-- Notification Toast -->
+        <div id="notification-toast" class="fixed top-6 left-1/2 -translate-x-1/2 z-[100] transform transition-all duration-300 translate-y-[-100px] opacity-0 pointer-events-none">
+            <div id="notification-content" class="bg-white border border-slate-200 shadow-2xl rounded-xl px-6 py-4 flex items-center gap-4 min-w-[320px]">
+                <div id="notification-icon" class="w-10 h-10 rounded-full flex items-center justify-center text-white shrink-0">
+                    <i class="fas fa-check"></i>
+                </div>
+                <div class="flex-1">
+                    <p id="notification-title" class="font-bold text-slate-800"></p>
+                    <p id="notification-message" class="text-sm text-slate-500"></p>
+                </div>
+                <button onclick="document.getElementById('notification-toast').classList.add('translate-y-[-100px]', 'opacity-0', 'pointer-events-none')" class="text-slate-400 hover:text-slate-600">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Confirm Modal -->
+        <div id="confirm-modal" class="absolute inset-0 bg-slate-900/50 backdrop-blur-sm z-[60] flex flex-col items-center justify-center hidden">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden mx-4">
+                <div class="p-6 border-b border-slate-100 bg-amber-50 text-center">
+                    <div class="w-12 h-12 rounded bg-amber-500 flex items-center justify-center font-bold text-2xl text-white mx-auto mb-3">
+                        <i class="fas fa-exclamation-triangle"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-slate-800">Xác nhận ghi đè dữ liệu</h3>
+                </div>
+                <div class="p-6 space-y-4">
+                    <p id="confirm-message" class="text-slate-600 text-center">
+                        Dữ liệu cũ của ngày này sẽ bị xóa hoàn toàn. Bạn có muốn tiếp tục?
+                    </p>
+                    <div class="flex gap-3">
+                        <button id="confirm-yes-btn" class="flex-1 bg-amber-600 text-white px-4 py-2.5 rounded-lg font-medium hover:bg-amber-700 transition">
+                            Đồng ý
+                        </button>
+                        <button id="confirm-no-btn" class="flex-1 bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg font-medium hover:bg-slate-50 transition">
+                            Hủy
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
 </html>
 

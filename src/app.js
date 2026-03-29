@@ -2,7 +2,7 @@ import Papa from 'https://cdn.jsdelivr.net/npm/papaparse@5.4.1/+esm';
 import * as XLSX from 'https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs';
 import Chart from 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/auto/+esm';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js';
-import { getFirestore, collection, query, where, getDocs, writeBatch, doc, deleteDoc } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js';
+import { getFirestore, collection, query, where, getDocs, writeBatch, doc, deleteDoc, orderBy, limit } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js';
 import config from '../firebase-applet-config.json';
 
 // --- FIREBASE INITIALIZATION ---
@@ -14,16 +14,31 @@ async function initFirebase() {
         const app = initializeApp(config);
         db = getFirestore(app, config.firestoreDatabaseId);
         
-        // Set default date to 2026-03-28 as requested
-        const defaultDate = '2026-03-28';
-        document.getElementById('global-date').value = defaultDate;
-        document.getElementById('upload-date').value = defaultDate;
+        // Luôn hiển thị dữ liệu của ngày gần nhất có trong DB
+        const latestDate = await findLatestDate();
+        
+        document.getElementById('global-date').value = latestDate;
+        document.getElementById('upload-date').value = latestDate;
         
         setupAuthListeners();
     } catch (error) {
         console.error("Lỗi khởi tạo Firebase:", error);
-        alert("Không thể kết nối đến cơ sở dữ liệu. Vui lòng kiểm tra cấu hình.");
+        showNotification("Lỗi hệ thống", "Không thể kết nối đến cơ sở dữ liệu. Vui lòng kiểm tra cấu hình.", "error");
     }
+}
+
+async function findLatestDate() {
+    try {
+        // Truy vấn lấy ngày mới nhất từ Firestore
+        const q = query(collection(db, 'gate_statistics'), orderBy('date', 'desc'), limit(1));
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+            return snapshot.docs[0].data().date;
+        }
+    } catch (error) {
+        console.error("Lỗi tìm ngày mới nhất:", error);
+    }
+    return '2026-03-28'; // Mặc định nếu chưa có dữ liệu
 }
 
 // --- AUTHENTICATION ---
@@ -181,6 +196,7 @@ const fileName = document.getElementById('file-name');
 const fileSize = document.getElementById('file-size');
 const processBtn = document.getElementById('process-btn');
 const processBtnText = document.getElementById('process-btn-text');
+const deleteDataBtn = document.getElementById('delete-data-btn');
 const uploadDateInput = document.getElementById('upload-date');
 const dataStatusBadge = document.getElementById('data-status-badge');
 
@@ -211,7 +227,7 @@ fileInput.addEventListener('change', (e) => {
 
 function handleFileSelect(file) {
     if (!file.name.match(/\.(csv|xlsx|xls)$/i)) {
-        alert('Vui lòng chọn file CSV hoặc Excel (.xlsx, .xls).');
+        showNotification("Định dạng không hỗ trợ", "Vui lòng chọn file CSV hoặc Excel (.xlsx, .xls).", "warning");
         return;
     }
     selectedFile = file;
@@ -245,6 +261,7 @@ async function checkExistingData(dateStr) {
         
         if (!snapshot.empty) {
             isUpdateMode = true;
+            deleteDataBtn.classList.remove('hidden');
             dataStatusBadge.textContent = 'Dữ liệu ngày này đã tồn tại';
             dataStatusBadge.classList.replace('bg-slate-100', 'bg-amber-100');
             dataStatusBadge.classList.replace('text-slate-600', 'text-amber-700');
@@ -253,6 +270,7 @@ async function checkExistingData(dateStr) {
             processBtn.classList.replace('hover:bg-blue-700', 'hover:bg-amber-700');
         } else {
             isUpdateMode = false;
+            deleteDataBtn.classList.add('hidden');
             dataStatusBadge.textContent = 'Chưa có dữ liệu';
             dataStatusBadge.classList.replace('bg-slate-100', 'bg-emerald-100');
             dataStatusBadge.classList.replace('text-slate-600', 'text-emerald-700');
@@ -294,10 +312,139 @@ function checkUploadReadiness() {
     }
 }
 
+deleteDataBtn.addEventListener('click', () => {
+    const dateStr = uploadDateInput.value;
+    if (!dateStr) return;
+    
+    showConfirm(
+        "Xác nhận xóa dữ liệu",
+        `Bạn có chắc chắn muốn XÓA HOÀN TOÀN dữ liệu của ngày ${dateStr}? Thao tác này không thể hoàn tác.`,
+        async () => {
+            showLoading(true, 'Đang xóa dữ liệu...');
+            try {
+                const q = query(collection(db, 'gate_statistics'), where('date', '==', dateStr));
+                const snapshot = await getDocs(q);
+                
+                let deleteBatch = writeBatch(db);
+                let deleteCount = 0;
+                
+                for (const docSnap of snapshot.docs) {
+                    deleteBatch.delete(docSnap.ref);
+                    deleteCount++;
+                    if (deleteCount === 500) {
+                        await deleteBatch.commit();
+                        deleteBatch = writeBatch(db);
+                        deleteCount = 0;
+                    }
+                }
+                if (deleteCount > 0) {
+                    await deleteBatch.commit();
+                }
+                
+                showLoading(false);
+                showNotification("Thành công", `Đã xóa dữ liệu ngày ${dateStr} thành công!`, "success");
+                checkExistingData(dateStr);
+                
+                // Nếu đang hiển thị ngày này ở dashboard, xóa luôn
+                if (document.getElementById('global-date').value === dateStr) {
+                    loadDashboardData(dateStr);
+                }
+            } catch (error) {
+                console.error("Lỗi xóa dữ liệu:", error);
+                showNotification("Lỗi hệ thống", "Đã xảy ra lỗi khi xóa dữ liệu.", "error");
+                showLoading(false);
+            }
+        }
+    );
+});
+
 processBtn.addEventListener('click', () => {
     if (!selectedFile || !uploadDateInput.value) return;
-    processFileData(selectedFile, uploadDateInput.value);
+    
+    if (isUpdateMode) {
+        showConfirm(
+            "Xác nhận ghi đè dữ liệu",
+            `Dữ liệu của ngày ${uploadDateInput.value} đã tồn tại. Dữ liệu cũ sẽ bị XÓA HOÀN TOÀN và thay thế bằng dữ liệu mới nhất. Bạn có muốn tiếp tục?`,
+            () => {
+                processFileData(selectedFile, uploadDateInput.value);
+            }
+        );
+    } else {
+        processFileData(selectedFile, uploadDateInput.value);
+    }
 });
+
+// --- NOTIFICATION & CONFIRM HELPERS ---
+function showNotification(title, message, type = 'success') {
+    const toast = document.getElementById('notification-toast');
+    const icon = document.getElementById('notification-icon');
+    const titleEl = document.getElementById('notification-title');
+    const messageEl = document.getElementById('notification-message');
+    
+    titleEl.textContent = title;
+    messageEl.textContent = message;
+    
+    // Reset classes
+    icon.className = 'w-10 h-10 rounded-full flex items-center justify-center text-white shrink-0';
+    const iconInner = icon.querySelector('i');
+    
+    if (type === 'success') {
+        icon.classList.add('bg-emerald-500');
+        iconInner.className = 'fas fa-check';
+    } else if (type === 'error') {
+        icon.classList.add('bg-rose-500');
+        iconInner.className = 'fas fa-exclamation-triangle';
+    } else if (type === 'warning') {
+        icon.classList.add('bg-amber-500');
+        iconInner.className = 'fas fa-exclamation';
+    }
+    
+    toast.classList.remove('translate-y-[-100px]', 'opacity-0', 'pointer-events-none');
+    
+    // Auto hide after 5 seconds
+    setTimeout(() => {
+        hideNotification();
+    }, 5000);
+}
+
+function hideNotification() {
+    const toast = document.getElementById('notification-toast');
+    if (toast) {
+        toast.classList.add('translate-y-[-100px]', 'opacity-0', 'pointer-events-none');
+    }
+}
+
+function showConfirm(title, message, onConfirm) {
+    const modal = document.getElementById('confirm-modal');
+    const titleEl = modal.querySelector('h3');
+    const messageEl = document.getElementById('confirm-message');
+    const yesBtn = document.getElementById('confirm-yes-btn');
+    const noBtn = document.getElementById('confirm-no-btn');
+    
+    titleEl.textContent = title;
+    messageEl.textContent = message;
+    
+    modal.classList.remove('hidden');
+    
+    const handleYes = () => {
+        modal.classList.add('hidden');
+        onConfirm();
+        cleanup();
+    };
+    
+    const handleNo = () => {
+        modal.classList.add('hidden');
+        cleanup();
+    };
+    
+    const cleanup = () => {
+        yesBtn.removeEventListener('click', handleYes);
+        noBtn.removeEventListener('click', handleNo);
+    };
+    
+    yesBtn.addEventListener('click', handleYes);
+    noBtn.addEventListener('click', handleNo);
+}
 
 /**
  * Thuật toán xử lý và gom nhóm dữ liệu (Data Aggregation)
@@ -323,13 +470,13 @@ function processFileData(file, targetDate) {
                     await aggregateAndUpload(rawData, targetDate);
                 } catch (error) {
                     console.error("Lỗi xử lý CSV:", error);
-                    alert("Đã xảy ra lỗi khi xử lý file: " + error.message);
+                    showNotification("Lỗi xử lý", "Đã xảy ra lỗi khi xử lý file: " + error.message, "error");
                     showLoading(false);
                 }
             },
             error: function(error) {
                 console.error("PapaParse Error:", error);
-                alert("Lỗi đọc file CSV.");
+                showNotification("Lỗi đọc file", "Không thể đọc file CSV.", "error");
                 showLoading(false);
             }
         });
@@ -350,13 +497,13 @@ function processFileData(file, targetDate) {
                 await aggregateAndUpload(rawData, targetDate);
             } catch (error) {
                 console.error("Lỗi xử lý Excel:", error);
-                alert("Đã xảy ra lỗi khi xử lý file Excel: " + error.message);
+                showNotification("Lỗi xử lý", "Đã xảy ra lỗi khi xử lý file Excel: " + error.message, "error");
                 showLoading(false);
             }
         };
         reader.onerror = function(error) {
             console.error("FileReader Error:", error);
-            alert("Lỗi đọc file Excel.");
+            showNotification("Lỗi đọc file", "Không thể đọc file Excel.", "error");
             showLoading(false);
         };
         reader.readAsArrayBuffer(file);
@@ -509,7 +656,7 @@ async function uploadToFirestore(aggregatedData, targetDate) {
         }
 
         showLoading(false);
-        alert("Nạp dữ liệu thành công!");
+        showNotification("Thành công", isUpdateMode ? "Dữ liệu đã được cập nhật thành công!" : "Dữ liệu đã được tải lên thành công!", "success");
         
         // Reset form
         selectedFile = null;
@@ -537,9 +684,9 @@ async function uploadToFirestore(aggregatedData, targetDate) {
                 }
             };
             console.error('Firestore Error: ', JSON.stringify(errInfo));
-            alert("Lỗi quyền truy cập: Bạn không có quyền ghi dữ liệu.");
+            showNotification("Lỗi quyền truy cập", "Bạn không có quyền ghi dữ liệu.", "error");
         } else {
-            alert("Đã xảy ra lỗi khi lưu dữ liệu lên server.");
+            showNotification("Lỗi hệ thống", "Đã xảy ra lỗi khi lưu dữ liệu lên server.", "error");
         }
         showLoading(false);
     }
