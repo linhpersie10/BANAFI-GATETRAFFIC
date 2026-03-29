@@ -114,26 +114,26 @@ function setupAuthListeners() {
 window.switchTab = function(tabId) {
     // Update desktop nav buttons
     document.querySelectorAll('aside nav button').forEach(btn => {
-        btn.classList.remove('bg-blue-600', 'text-white');
-        btn.classList.add('text-slate-300', 'hover:bg-slate-800', 'hover:text-white');
+        btn.classList.remove('bg-indigo-600', 'text-white', 'shadow-md', 'shadow-indigo-500/20');
+        btn.classList.add('text-slate-300', 'hover:bg-slate-800/80', 'hover:text-white');
     });
     
     const activeBtn = document.getElementById(`nav-${tabId}`);
     if (activeBtn) {
-        activeBtn.classList.remove('text-slate-300', 'hover:bg-slate-800', 'hover:text-white');
-        activeBtn.classList.add('bg-blue-600', 'text-white');
+        activeBtn.classList.remove('text-slate-300', 'hover:bg-slate-800/80', 'hover:text-white');
+        activeBtn.classList.add('bg-indigo-600', 'text-white', 'shadow-md', 'shadow-indigo-500/20');
     }
 
     // Update mobile nav buttons
     document.querySelectorAll('nav.md\\:hidden button').forEach(btn => {
-        btn.classList.remove('text-blue-600');
+        btn.classList.remove('text-indigo-600');
         btn.classList.add('text-slate-400');
     });
     
     const activeMobileBtn = document.getElementById(`nav-mobile-${tabId}`);
     if (activeMobileBtn) {
         activeMobileBtn.classList.remove('text-slate-400');
-        activeMobileBtn.classList.add('text-blue-600');
+        activeMobileBtn.classList.add('text-indigo-600');
     }
 
     // Update content visibility
@@ -704,6 +704,7 @@ function updateDashboardKPIs(selectedGateName) {
     }
     
     document.getElementById('kpi-top-ticket').textContent = topTicket;
+    document.getElementById('kpi-top-ticket').title = topTicket; // Thêm title để hover xem full text
     document.getElementById('kpi-top-ticket-count').textContent = `${maxTicketCount.toLocaleString('vi-VN')} vé`;
 }
 
@@ -855,25 +856,34 @@ function updateGateSelector() {
         selector.appendChild(option);
     });
 
-    // Tự động chọn nhà ga đầu tiên nếu có
+    // Tự động chọn "Tất cả nhà ga" (giá trị rỗng) làm mặc định
     if (gateNames.length > 0) {
-        selector.value = gateNames[0];
-        renderGateDetails(gateNames[0]);
+        selector.value = "";
+        renderGateDetails("");
     }
 }
 
 document.getElementById('gate-selector').addEventListener('change', (e) => {
-    if (e.target.value) {
-        renderGateDetails(e.target.value);
-    } else {
-        if (gateLineChart) gateLineChart.destroy();
-        document.getElementById('ticket-table-body').innerHTML = '<tr><td colspan="2" class="px-4 py-3 text-center text-slate-500">Chưa có dữ liệu</td></tr>';
-    }
+    renderGateDetails(e.target.value);
 });
 
 function renderGateDetails(gateName) {
-    const gateData = currentGlobalData.find(d => d.gateName === gateName);
-    if (!gateData) return;
+    if (currentGlobalData.length === 0) return;
+
+    let dataToProcess = [];
+    let chartLabel = '';
+
+    if (!gateName || gateName === "") {
+        // Tổng hợp tất cả nhà ga
+        dataToProcess = currentGlobalData;
+        chartLabel = 'Lưu lượng khách - Tất cả nhà ga';
+    } else {
+        // Chỉ lấy nhà ga được chọn
+        const gateData = currentGlobalData.find(d => d.gateName === gateName);
+        if (!gateData) return;
+        dataToProcess = [gateData];
+        chartLabel = `Lưu lượng khách - ${gateName}`;
+    }
 
     // 1. Vẽ Line Chart
     const ctx = document.getElementById('gate-line-chart').getContext('2d');
@@ -887,8 +897,13 @@ function renderGateDetails(gateName) {
     const hours = Array.from(allHoursSet).sort();
 
     const passengerCounts = hours.map(hour => {
-        if (!gateData.hourlyData[hour]) return 0;
-        return Object.values(gateData.hourlyData[hour]).reduce((sum, count) => sum + count, 0);
+        let sumForHour = 0;
+        dataToProcess.forEach(gateData => {
+            if (gateData.hourlyData[hour]) {
+                sumForHour += Object.values(gateData.hourlyData[hour]).reduce((sum, count) => sum + count, 0);
+            }
+        });
+        return sumForHour;
     });
 
     gateLineChart = new Chart(ctx, {
@@ -896,7 +911,7 @@ function renderGateDetails(gateName) {
         data: {
             labels: hours,
             datasets: [{
-                label: `Lưu lượng khách - ${gateName}`,
+                label: chartLabel,
                 data: passengerCounts,
                 borderColor: '#3b82f6',
                 backgroundColor: 'rgba(59, 130, 246, 0.1)',
@@ -925,9 +940,11 @@ function renderGateDetails(gateName) {
 
     // 2. Cập nhật Bảng Cơ cấu loại vé
     const ticketTotals = {};
-    Object.values(gateData.hourlyData).forEach(hourData => {
-        Object.entries(hourData).forEach(([ticketType, count]) => {
-            ticketTotals[ticketType] = (ticketTotals[ticketType] || 0) + count;
+    dataToProcess.forEach(gateData => {
+        Object.values(gateData.hourlyData).forEach(hourData => {
+            Object.entries(hourData).forEach(([ticketType, count]) => {
+                ticketTotals[ticketType] = (ticketTotals[ticketType] || 0) + count;
+            });
         });
     });
 

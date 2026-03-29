@@ -43,52 +43,52 @@
 <body class="bg-slate-50 text-slate-800 font-sans h-screen flex flex-col md:flex-row overflow-hidden">
 
     <!-- Mobile Header (Visible only on small screens) -->
-    <div class="md:hidden bg-slate-900 text-white p-4 flex justify-between items-center z-20 shadow-md shrink-0">
+    <div class="md:hidden bg-[#0f172a] text-white p-4 flex justify-between items-center z-20 shadow-md shrink-0">
         <div class="flex items-center gap-2">
-            <div class="w-8 h-8 rounded bg-blue-500 flex items-center justify-center font-bold text-xl">B</div>
+            <div class="w-8 h-8 rounded bg-indigo-600 flex items-center justify-center font-bold text-xl">B</div>
             <h1 class="text-xl font-bold tracking-wider">BNC Gatecheck</h1>
         </div>
         <div class="flex items-center gap-3">
-            <button id="mobile-login-btn" class="text-xs bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded transition">Login</button>
-            <button id="mobile-logout-btn" class="text-xs bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded transition hidden">Logout</button>
+            <button id="mobile-login-btn" class="text-xs bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded transition">Login</button>
+            <button id="mobile-logout-btn" class="text-xs bg-rose-600 hover:bg-rose-700 px-3 py-1.5 rounded transition hidden">Logout</button>
         </div>
     </div>
 
     <!-- Desktop Sidebar -->
-    <aside class="hidden md:flex w-64 bg-slate-900 text-white flex-col shadow-xl z-20 shrink-0">
-        <div class="p-6 border-b border-slate-800 flex items-center gap-3">
-            <div class="w-8 h-8 rounded bg-blue-500 flex items-center justify-center font-bold text-xl">B</div>
+    <aside class="hidden md:flex w-64 bg-[#0f172a] text-white flex-col shadow-xl z-20 shrink-0">
+        <div class="p-6 border-b border-slate-800/50 flex items-center gap-3">
+            <div class="w-8 h-8 rounded bg-indigo-600 flex items-center justify-center font-bold text-xl shadow-lg shadow-indigo-500/30">B</div>
             <h1 class="text-xl font-bold tracking-wider">BNC Gatecheck</h1>
         </div>
         
         <div class="p-4">
-            <p class="text-xs text-slate-400 uppercase font-semibold tracking-wider mb-4">Menu chính</p>
-            <nav class="space-y-2">
-                <button onclick="switchTab('dashboard')" id="nav-dashboard" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg bg-blue-600 text-white transition-colors text-left">
+            <p class="text-[10px] text-slate-400 uppercase font-bold tracking-widest mb-4 px-2">Menu chính</p>
+            <nav class="space-y-1.5">
+                <button onclick="switchTab('dashboard')" id="nav-dashboard" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg bg-indigo-600 text-white shadow-md shadow-indigo-500/20 transition-all text-left font-medium">
                     <i class="fas fa-chart-pie w-5 text-center"></i>
                     <span>Tổng quan</span>
                 </button>
-                <button onclick="switchTab('gate-details')" id="nav-gate-details" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-colors text-left">
+                <button onclick="switchTab('gate-details')" id="nav-gate-details" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-white transition-all text-left font-medium">
                     <i class="fas fa-door-open w-5 text-center"></i>
                     <span>Chi tiết Nhà Ga</span>
                 </button>
-                <button onclick="switchTab('data-entry')" id="nav-data-entry" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-colors text-left">
+                <button onclick="switchTab('data-entry')" id="nav-data-entry" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-white transition-all text-left font-medium">
                     <i class="fas fa-database w-5 text-center"></i>
                     <span>Quản lý Dữ liệu</span>
                 </button>
             </nav>
         </div>
 
-        <div class="mt-auto p-4 border-t border-slate-800">
+        <div class="mt-auto p-4 border-t border-slate-800/50 bg-slate-900/50">
             <div id="auth-section" class="flex items-center gap-3">
-                <div class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center">
-                    <i class="fas fa-user text-sm"></i>
+                <div class="w-8 h-8 rounded-full bg-slate-700/50 flex items-center justify-center border border-slate-600/50">
+                    <i class="fas fa-user text-sm text-slate-300"></i>
                 </div>
                 <div class="flex-1 min-w-0">
-                    <p id="user-name" class="text-sm font-medium truncate">Chưa đăng nhập</p>
+                    <p id="user-name" class="text-sm font-medium truncate text-slate-200">Chưa đăng nhập</p>
                 </div>
-                <button id="login-btn" class="text-xs bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded transition">Login</button>
-                <button id="logout-btn" class="text-xs bg-red-600 hover:bg-red-700 px-2 py-1 rounded transition hidden">Logout</button>
+                <button id="login-btn" class="text-xs bg-indigo-600 hover:bg-indigo-700 px-2.5 py-1.5 rounded transition font-medium">Login</button>
+                <button id="logout-btn" class="text-xs bg-rose-600 hover:bg-rose-700 px-2.5 py-1.5 rounded transition font-medium hidden">Logout</button>
             </div>
         </div>
     </aside>
@@ -148,43 +148,44 @@
             <div id="tab-dashboard" class="tab-content space-y-6">
                 <!-- KPI Cards -->
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-                    <div class="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-slate-100 flex items-center gap-4">
-                        <div class="w-12 h-12 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xl shrink-0">
+                    <div class="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-slate-200/60 flex items-center gap-4 hover:shadow-md transition-shadow">
+                        <div class="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-xl shrink-0 border border-indigo-100">
                             <i class="fas fa-users"></i>
                         </div>
                         <div class="min-w-0">
                             <p class="text-sm text-slate-500 font-medium truncate">Tổng lượt khách</p>
-                            <h3 id="kpi-total" class="text-xl md:text-2xl font-bold text-slate-800 truncate">0</h3>
+                            <h3 id="kpi-total" class="text-2xl md:text-3xl font-bold text-slate-800 truncate tracking-tight">0</h3>
                         </div>
                     </div>
-                    <div class="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-slate-100 flex items-center gap-4">
-                        <div class="w-12 h-12 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center text-xl shrink-0">
+                    <div class="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-slate-200/60 flex items-center gap-4 hover:shadow-md transition-shadow">
+                        <div class="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-xl shrink-0 border border-amber-100">
                             <i class="fas fa-clock"></i>
                         </div>
                         <div class="min-w-0">
                             <p class="text-sm text-slate-500 font-medium truncate">Khung giờ cao điểm</p>
-                            <h3 id="kpi-peak-hour" class="text-xl md:text-2xl font-bold text-slate-800 truncate">--:--</h3>
-                            <p id="kpi-peak-hour-count" class="text-xs text-slate-400 mt-1">0 vé</p>
+                            <h3 id="kpi-peak-hour" class="text-xl md:text-2xl font-bold text-slate-800 truncate tracking-tight">--:--</h3>
+                            <p id="kpi-peak-hour-count" class="text-xs font-medium text-slate-400 mt-0.5">0 vé</p>
                         </div>
                     </div>
-                    <div class="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-slate-100 flex items-center gap-4">
-                        <div class="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-xl shrink-0">
+                    <div class="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-slate-200/60 flex items-center gap-4 hover:shadow-md transition-shadow">
+                        <div class="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl shrink-0 border border-emerald-100">
                             <i class="fas fa-door-open"></i>
                         </div>
                         <div class="min-w-0">
                             <p id="kpi-top-gate-label" class="text-sm text-slate-500 font-medium truncate">Nhà ga đông nhất</p>
-                            <h3 id="kpi-top-gate" class="text-xl md:text-2xl font-bold text-slate-800 truncate">---</h3>
-                            <p id="kpi-top-gate-count" class="text-xs text-slate-400 mt-1">0 vé</p>
+                            <h3 id="kpi-top-gate" class="text-xl md:text-2xl font-bold text-slate-800 truncate tracking-tight">---</h3>
+                            <p id="kpi-top-gate-count" class="text-xs font-medium text-slate-400 mt-0.5">0 vé</p>
                         </div>
                     </div>
-                    <div class="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-slate-100 flex items-center gap-4">
-                        <div class="w-12 h-12 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center text-xl shrink-0">
+                    <div class="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-slate-200/60 flex items-center gap-4 hover:shadow-md transition-shadow">
+                        <div class="w-12 h-12 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center text-xl shrink-0 border border-violet-100">
                             <i class="fas fa-ticket-alt"></i>
                         </div>
-                        <div class="min-w-0">
+                        <div class="min-w-0 flex-1">
                             <p class="text-sm text-slate-500 font-medium truncate">Loại vé phổ biến</p>
-                            <h3 id="kpi-top-ticket" class="text-xl md:text-2xl font-bold text-slate-800 truncate">---</h3>
-                            <p id="kpi-top-ticket-count" class="text-xs text-slate-400 mt-1">0 vé</p>
+                            <!-- Use line-clamp to allow up to 2 lines, or smaller text if it's long -->
+                            <h3 id="kpi-top-ticket" class="text-base md:text-lg font-bold text-slate-800 leading-tight mt-1 line-clamp-2" title="---">---</h3>
+                            <p id="kpi-top-ticket-count" class="text-xs font-medium text-slate-400 mt-1">0 vé</p>
                         </div>
                     </div>
                 </div>
