@@ -1,0 +1,5 @@
+{
+  "name": "BANAFI - GATECHECK",
+  "description": "Dashboard thể hiện lượng khách qua các cổng soát vé theo giờ",
+  "requestFramePermissions": []
+}

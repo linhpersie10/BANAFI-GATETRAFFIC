@@ -1,0 +1,63 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: gate_statistics
+    // Document ID: YYYY-MM-DD_GateName
+    // Fields:
+    //   - date: string (required) - YYYY-MM-DD format
+    //   - gateName: string (required) - Name of the gate
+    //   - totalPassengers: number (required) - Total passengers
+    //   - hourlyData: map (required) - Map of Hour Bucket to Ticket Type to Count
+    //   - updatedAt: string (required) - ISO 8601 timestamp
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      // Bypassing Firebase Auth as requested to use a hardcoded client-side login.
+      // WARNING: This makes the database publicly readable/writable. 
+      // In a real production app, you should use Firebase Auth or a custom backend.
+      return true;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidDateString(dateStr) {
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}$");
+    }
+
+    function isValidTimestampString(dateStr) {
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    function isValidGateStatistic(data) {
+      return hasOnlyAllowedFields(['date', 'gateName', 'totalPassengers', 'hourlyData', 'updatedAt']) &&
+             hasRequiredFields(['date', 'gateName', 'totalPassengers', 'hourlyData', 'updatedAt']) &&
+             isValidDateString(data.date) &&
+             data.gateName is string && data.gateName.size() > 0 && data.gateName.size() < 100 &&
+             data.totalPassengers is number && data.totalPassengers >= 0 &&
+             data.hourlyData is map &&
+             isValidTimestampString(data.updatedAt);
+    }
+
+    match /gate_statistics/{statId} {
+      // For this internal dashboard, we assume any authenticated user can read and write.
+      // In a real production app, we would restrict this to specific roles (e.g., isAdmin()).
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidGateStatistic(request.resource.data);
+      allow update: if isAuthenticated() && isValidGateStatistic(request.resource.data);
+      allow delete: if isAuthenticated(); // Allow deletion for data management
+    }
+  }
+}

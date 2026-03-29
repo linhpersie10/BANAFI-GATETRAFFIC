@@ -1,0 +1,41 @@
+{
+  "entities": {
+    "GateStatistic": {
+      "title": "GateStatistic",
+      "description": "Aggregated passenger statistics for a specific gate on a specific date.",
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "description": "The date of the statistics in YYYY-MM-DD format."
+        },
+        "gateName": {
+          "type": "string",
+          "description": "The name of the gate (e.g., 'Gate 9')."
+        },
+        "totalPassengers": {
+          "type": "number",
+          "description": "Total number of passengers through this gate on this date."
+        },
+        "hourlyData": {
+          "type": "object",
+          "description": "Map of Hour Bucket (e.g., '12:00 - 13:00') to a map of Ticket Type to Count."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of the last update."
+        }
+      },
+      "required": ["date", "gateName", "totalPassengers", "hourlyData", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "gate_statistics/{statId}": {
+      "schema": {
+        "$ref": "#/entities/GateStatistic"
+      },
+      "description": "Stores daily aggregated passenger statistics per gate."
+    }
+  }
+}
