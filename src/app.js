@@ -547,6 +547,8 @@ async function uploadToFirestore(aggregatedData, targetDate) {
 
 // --- DASHBOARD & VISUALIZATION LOGIC ---
 let dashboardChart = null;
+let gatePieChart = null;
+let hourPieChart = null;
 let gateLineChart = null;
 let currentGlobalData = []; // Lưu trữ dữ liệu của ngày đang chọn
 
@@ -605,6 +607,8 @@ function clearDashboard() {
     document.getElementById('kpi-top-ticket').textContent = '---';
     document.getElementById('kpi-top-ticket-count').textContent = '0 vé';
     if (dashboardChart) dashboardChart.destroy();
+    if (gatePieChart) gatePieChart.destroy();
+    if (hourPieChart) hourPieChart.destroy();
     if (gateLineChart) gateLineChart.destroy();
     document.getElementById('ticket-table-body').innerHTML = '<tr><td colspan="2" class="px-4 py-3 text-center text-slate-500">Chưa có dữ liệu</td></tr>';
 }
@@ -640,6 +644,7 @@ function updateDashboardKPIs(selectedGateName) {
     
     const hourlyTotals = {};
     const ticketTotals = {};
+    const gateTotals = {};
     
     // Nếu có chọn nhà ga, chỉ tính toán trên nhà ga đó
     const dataToProcess = selectedGateName 
@@ -657,6 +662,7 @@ function updateDashboardKPIs(selectedGateName) {
 
     dataToProcess.forEach(gateData => {
         totalPassengers += gateData.totalPassengers;
+        gateTotals[gateData.gateName] = gateData.totalPassengers;
 
         Object.keys(gateData.hourlyData).forEach(hour => {
             let hourTotal = 0;
@@ -706,6 +712,102 @@ function updateDashboardKPIs(selectedGateName) {
     document.getElementById('kpi-top-ticket').textContent = topTicket;
     document.getElementById('kpi-top-ticket').title = topTicket; // Thêm title để hover xem full text
     document.getElementById('kpi-top-ticket-count').textContent = `${maxTicketCount.toLocaleString('vi-VN')} vé`;
+
+    // Render Pie Charts
+    renderDashboardPieCharts(gateTotals, hourlyTotals);
+}
+
+function renderDashboardPieCharts(gateTotals, hourlyTotals) {
+    const gateCtx = document.getElementById('gate-pie-chart').getContext('2d');
+    const hourCtx = document.getElementById('hour-pie-chart').getContext('2d');
+    
+    if (gatePieChart) gatePieChart.destroy();
+    if (hourPieChart) hourPieChart.destroy();
+    
+    const colors = [
+        '#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', 
+        '#06b6d4', '#f97316', '#64748b', '#ec4899', '#84cc16'
+    ];
+
+    const commonOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: {
+            padding: { top: 0, bottom: 0, left: 0, right: 0 }
+        },
+        plugins: {
+            legend: {
+                position: 'bottom',
+                labels: { 
+                    boxWidth: 8, 
+                    usePointStyle: true,
+                    pointStyle: 'circle',
+                    font: { size: 10, weight: '500' }, 
+                    padding: 8
+                }
+            },
+            tooltip: {
+                backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                padding: 12,
+                cornerRadius: 8,
+                callbacks: {
+                    label: function(context) {
+                        const label = context.label || '';
+                        const value = context.raw || 0;
+                        const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                        const percentage = ((value / total) * 100).toFixed(1);
+                        return ` ${label}: ${value.toLocaleString('vi-VN')} (${percentage}%)`;
+                    }
+                }
+            }
+        },
+        cutout: '65%'
+    };
+
+    // Gate Pie Chart
+    const gateLabels = Object.keys(gateTotals);
+    const gateData = Object.values(gateTotals);
+    
+    gatePieChart = new Chart(gateCtx, {
+        type: 'doughnut',
+        data: {
+            labels: gateLabels,
+            datasets: [{
+                data: gateData,
+                backgroundColor: colors,
+                borderWidth: 2,
+                borderColor: '#ffffff',
+                hoverOffset: 12
+            }]
+        },
+        options: commonOptions
+    });
+
+    // Hour Pie Chart - Filtered from 08:00 to 17:00 (slots starting at 8 to 16)
+    const filteredHours = Object.keys(hourlyTotals)
+        .filter(h => {
+            const hourInt = parseInt(h.split(':')[0]);
+            return hourInt >= 8 && hourInt <= 16;
+        })
+        .sort();
+    
+    const hourLabelsShort = filteredHours.map(h => parseInt(h.split(':')[0]) + 'h');
+    const hourData = filteredHours.map(h => hourlyTotals[h]);
+    
+    hourPieChart = new Chart(hourCtx, {
+        type: 'doughnut',
+        data: {
+            labels: hourLabelsShort,
+            datasets: [{
+                data: hourData,
+                backgroundColor: colors,
+                borderWidth: 2,
+                borderColor: '#ffffff',
+                hoverOffset: 12
+            }]
+        },
+        options: commonOptions
+    });
 }
 
 function renderDashboardChart(allHoursSet) {

@@ -190,11 +190,30 @@
                     </div>
                 </div>
 
-                <!-- Main Chart -->
-                <div class="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
-                    <h3 class="text-lg font-bold text-slate-800 mb-4">Lưu lượng khách theo khung giờ</h3>
-                    <div class="h-[400px] w-full relative">
-                        <canvas id="dashboard-chart"></canvas>
+                <!-- Main Charts Section -->
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    <!-- Left Column: Bar Chart (Priority) -->
+                    <div class="lg:col-span-9 bg-white rounded-xl p-6 shadow-sm border border-slate-200/60 flex flex-col h-[624px]">
+                        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6">Lưu lượng khách theo khung giờ</h3>
+                        <div class="flex-1 w-full relative">
+                            <canvas id="dashboard-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Right Column: Pie Charts (Approx 30%) -->
+                    <div class="lg:col-span-3 space-y-6">
+                        <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60 flex flex-col h-[300px]">
+                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 px-2">Cơ cấu theo Nhà Ga</h3>
+                            <div class="flex-1 w-full relative">
+                                <canvas id="gate-pie-chart"></canvas>
+                            </div>
+                        </div>
+                        <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60 flex flex-col h-[300px]">
+                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 px-2">Cơ cấu theo Khung giờ</h3>
+                            <div class="flex-1 w-full relative">
+                                <canvas id="hour-pie-chart"></canvas>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
