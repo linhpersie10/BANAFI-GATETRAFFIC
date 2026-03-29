@@ -429,8 +429,17 @@ async function aggregateAndUpload(rawData, targetDate) {
             aggregatedData[gateName].hourly[hourBucket][ticketType] = 0;
         }
 
-        aggregatedData[gateName].hourly[hourBucket][ticketType]++;
-        aggregatedData[gateName].total++;
+        // Lấy số lượng vé từ cột C (index 2)
+        let quantity = 0; // Mặc định là 0 nếu không có dữ liệu hợp lệ
+        if (row[2] !== undefined && row[2] !== null && row[2] !== '') {
+            const parsedQuantity = parseInt(row[2].toString().replace(/,/g, ''), 10);
+            if (!isNaN(parsedQuantity)) {
+                quantity = parsedQuantity;
+            }
+        }
+
+        aggregatedData[gateName].hourly[hourBucket][ticketType] += quantity;
+        aggregatedData[gateName].total += quantity;
     });
 
     await uploadToFirestore(aggregatedData, targetDate);
