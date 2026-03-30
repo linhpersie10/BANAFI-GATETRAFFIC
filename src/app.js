@@ -502,8 +502,32 @@ function processFileData(file, targetDate) {
             skipEmptyLines: true,
             complete: async function(results) {
                 try {
-                    // Bỏ qua 10 dòng đầu tiên (metadata)
-                    const rawData = results.data.slice(10);
+                    // Tìm dòng bắt đầu dữ liệu (sau dòng header)
+                    let dataStartIndex = 0;
+                    for (let i = 0; i < Math.min(20, results.data.length); i++) {
+                        const row = results.data[i];
+                        // Tìm dòng header dựa trên các từ khóa phổ biến hoặc kiểm tra xem cột 8 có phải là chuỗi không
+                        if (row && row.length > 8 && typeof row[8] === 'string' && (row[8].includes("AccessPointName") || row[8].includes("Gate") || row[8].includes("Cổng"))) {
+                            dataStartIndex = i + 1;
+                            break;
+                        }
+                    }
+                    // Nếu không tìm thấy header rõ ràng, thử tìm dòng đầu tiên có dữ liệu hợp lệ
+                    if (dataStartIndex === 0) {
+                        for (let i = 0; i < Math.min(20, results.data.length); i++) {
+                            const row = results.data[i];
+                            if (row && row.length > 13 && row[0] && row[8] && row[13]) {
+                                // Kiểm tra xem row[0] có vẻ là ngày tháng không
+                                const timeStr = row[0].toString();
+                                if (timeStr.match(/\d{1,2}:\d{2}/) || !isNaN(Date.parse(timeStr))) {
+                                    dataStartIndex = i;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    const rawData = results.data.slice(dataStartIndex);
                     await aggregateAndUpload(rawData, targetDate);
                 } catch (error) {
                     console.error("Lỗi xử lý CSV:", error);
@@ -529,8 +553,29 @@ function processFileData(file, targetDate) {
                 // Convert to array of arrays
                 const results = XLSX.utils.sheet_to_json(worksheet, {header: 1, defval: ""});
                 
-                // Bỏ qua 10 dòng đầu tiên (metadata)
-                const rawData = results.slice(10);
+                // Tìm dòng bắt đầu dữ liệu (sau dòng header)
+                let dataStartIndex = 0;
+                for (let i = 0; i < Math.min(20, results.length); i++) {
+                    const row = results[i];
+                    if (row && row.length > 8 && typeof row[8] === 'string' && (row[8].includes("AccessPointName") || row[8].includes("Gate") || row[8].includes("Cổng"))) {
+                        dataStartIndex = i + 1;
+                        break;
+                    }
+                }
+                if (dataStartIndex === 0) {
+                    for (let i = 0; i < Math.min(20, results.length); i++) {
+                        const row = results[i];
+                        if (row && row.length > 13 && row[0] && row[8] && row[13]) {
+                            const timeStr = row[0].toString();
+                            if (timeStr.match(/\d{1,2}:\d{2}/) || !isNaN(Date.parse(timeStr)) || typeof row[0] === 'number') {
+                                dataStartIndex = i;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                const rawData = results.slice(dataStartIndex);
                 await aggregateAndUpload(rawData, targetDate);
             } catch (error) {
                 console.error("Lỗi xử lý Excel:", error);
@@ -573,10 +618,19 @@ async function aggregateAndUpload(rawData, targetDate) {
             rawTime = rawTime.toString();
         }
 
-        const rawGate = row[8] ? row[8].toString() : ''; // AccessPointName
-        const ticketType = row[13] ? row[13].toString() : ''; // ProductName
+        const rawGate = row[8] ? row[8].toString().trim() : ''; // AccessPointName
+        const ticketType = row[13] ? row[13].toString().trim() : ''; // ProductName
 
         if (!rawTime || !rawGate || !ticketType) return;
+
+        // Bỏ qua các dòng tổng cộng (Summary rows)
+        // Thường các dòng này có tên sản phẩm là "Total" hoặc "Tổng cộng"
+        const isSummaryTicket = ticketType.toLowerCase().includes('total') || ticketType.toLowerCase().includes('tổng') || ticketType.toLowerCase().includes('cộng');
+        
+        if (isSummaryTicket) {
+            console.log(`Bỏ qua dòng tổng cộng: Gate=${rawGate}, Ticket=${ticketType}`);
+            return;
+        }
 
         // 1. Bóc tách Khung giờ (30-minute Bucket)
         let hourBucket = "00:00 - 01:00";
@@ -594,24 +648,13 @@ async function aggregateAndUpload(rawData, targetDate) {
             }
         }
 
-        // 2. Bóc tách Tên Nhà Ga
-        let gateName = "Unknown Gate";
-        const gateMatch = rawGate.match(/Gate\s*(\d+)/i);
-        if (gateMatch) {
-            // Chuẩn hóa tên nhà ga: Gate 1, Gate 01 -> Gate 01
-            const gateNum = parseInt(gateMatch[1], 10).toString().padStart(2, '0');
-            gateName = `Gate ${gateNum}`;
-        } else {
-            gateName = rawGate.split('-')[0].trim();
-        }
-
-        // 2.5 Bóc tách Tên Lane
-        let laneName = "Unknown Lane";
+        // 2. Bóc tách Tên Nhà Ga và Lane
+        let gateName = rawGate;
+        let laneName = rawGate;
         const dashIndex = rawGate.indexOf('-');
         if (dashIndex !== -1) {
+            gateName = rawGate.substring(0, dashIndex).trim();
             laneName = rawGate.substring(dashIndex + 1).trim();
-        } else {
-            laneName = rawGate;
         }
 
         // 3. Gom nhóm (Aggregation)
@@ -639,14 +682,8 @@ async function aggregateAndUpload(rawData, targetDate) {
             };
         }
 
-        // Lấy số lượng vé từ cột C (index 2)
-        let quantity = 0; // Mặc định là 0 nếu không có dữ liệu hợp lệ
-        if (row[2] !== undefined && row[2] !== null && row[2] !== '') {
-            const parsedQuantity = parseInt(row[2].toString().replace(/,/g, ''), 10);
-            if (!isNaN(parsedQuantity)) {
-                quantity = parsedQuantity;
-            }
-        }
+        // Mỗi dòng dữ liệu hợp lệ tương ứng với 1 lượt khách
+        let quantity = 1;
 
         // Parse full date/time for lane operating time
         let fullDateObj = null;
