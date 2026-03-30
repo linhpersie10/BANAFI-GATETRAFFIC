@@ -1299,7 +1299,32 @@ function renderDashboardChart(allHoursSet) {
     });
 }
 
-// --- GATE DETAILS LOGIC ---
+// --- ONE-TIME DATA WIPE SCRIPT ---
+// Tự động xóa dữ liệu ngày 30/03/2026 một lần duy nhất theo yêu cầu của người dùng
+setTimeout(async () => {
+    if (!localStorage.getItem('wiped_2026_03_30') && db) {
+        try {
+            const q = query(collection(db, 'gate_statistics'), where('date', '==', '2026-03-30'));
+            const snapshot = await getDocs(q);
+            if (!snapshot.empty) {
+                let deleteBatch = writeBatch(db);
+                snapshot.docs.forEach(docSnap => {
+                    deleteBatch.delete(docSnap.ref);
+                });
+                await deleteBatch.commit();
+                console.log("Đã tự động xóa sạch dữ liệu cũ của ngày 2026-03-30 theo yêu cầu.");
+                
+                // Cập nhật lại UI nếu đang ở trang dashboard
+                if (document.getElementById('global-date').value === '2026-03-30') {
+                    loadDashboardData('2026-03-30');
+                }
+            }
+            localStorage.setItem('wiped_2026_03_30', 'true');
+        } catch (e) {
+            console.error("Lỗi khi tự động xóa dữ liệu:", e);
+        }
+    }
+}, 3000); // Đợi Firebase khởi tạo xong
 function updateGateSelector() {
     const selector = document.getElementById('gate-selector');
     const prodSelector = document.getElementById('productivity-gate-selector');
