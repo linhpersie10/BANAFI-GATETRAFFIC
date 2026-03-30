@@ -208,7 +208,73 @@ window.switchTab = function(tabId) {
     } else if (tabId === 'gate-details' && gateLineChart) {
         gateLineChart.resize();
     }
+    
+    updateDownloadButtonVisibility();
 };
+
+function updateDownloadButtonVisibility() {
+    const downloadBtn = document.getElementById('download-image-btn');
+    if (!downloadBtn) return;
+    
+    const isDashboardActive = !document.getElementById('tab-dashboard').classList.contains('hidden');
+    const isGateDetailsActive = !document.getElementById('tab-gate-details').classList.contains('hidden');
+    
+    if (isDashboardActive) {
+        downloadBtn.classList.remove('hidden');
+    } else if (isGateDetailsActive) {
+        const gateSelector = document.getElementById('gate-selector');
+        if (gateSelector && gateSelector.value === '') {
+            downloadBtn.classList.remove('hidden');
+        } else {
+            downloadBtn.classList.add('hidden');
+        }
+    } else {
+        downloadBtn.classList.add('hidden');
+    }
+}
+
+document.getElementById('download-image-btn')?.addEventListener('click', async () => {
+    const isDashboardActive = !document.getElementById('tab-dashboard').classList.contains('hidden');
+    const isGateDetailsActive = !document.getElementById('tab-gate-details').classList.contains('hidden');
+    
+    let targetElement = null;
+    let fileName = 'BNC_Gatecheck';
+    const dateStr = document.getElementById('global-date').value || 'UnknownDate';
+
+    if (isDashboardActive) {
+        targetElement = document.getElementById('tab-dashboard');
+        fileName = `Tong_Quan_${dateStr}.jpg`;
+    } else if (isGateDetailsActive) {
+        targetElement = document.getElementById('tab-gate-details');
+        fileName = `Chi_Tiet_Nha_Ga_Tat_Ca_${dateStr}.jpg`;
+    }
+    
+    if (!targetElement) return;
+
+    try {
+        showLoading(true, 'Đang tạo hình ảnh...');
+        
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        const canvas = await html2canvas(targetElement, {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: '#f8fafc'
+        });
+
+        const image = canvas.toDataURL('image/jpeg', 0.9);
+        const link = document.createElement('a');
+        link.href = image;
+        link.download = fileName;
+        link.click();
+        
+        showLoading(false);
+    } catch (error) {
+        console.error('Lỗi khi tạo hình ảnh:', error);
+        showNotification('Lỗi', 'Không thể tạo hình ảnh. Vui lòng thử lại.', 'error');
+        showLoading(false);
+    }
+});
 
 function showLoading(show, text = 'Đang xử lý dữ liệu...') {
     const overlay = document.getElementById('loading-overlay');
@@ -1292,6 +1358,7 @@ function updateGateSelector() {
 
 document.getElementById('gate-selector').addEventListener('change', (e) => {
     renderGateDetails(e.target.value);
+    updateDownloadButtonVisibility();
 });
 
 function renderGateDetails(gateName) {
@@ -1564,4 +1631,5 @@ document.querySelectorAll('input[name="taskforce"]').forEach(cb => {
 });
 
 // Khởi chạy ứng dụng
+updateDownloadButtonVisibility();
 initFirebase();
