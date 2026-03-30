@@ -598,7 +598,9 @@ async function aggregateAndUpload(rawData, targetDate) {
         let gateName = "Unknown Gate";
         const gateMatch = rawGate.match(/Gate\s*(\d+)/i);
         if (gateMatch) {
-            gateName = `Gate ${gateMatch[1]}`;
+            // Chuẩn hóa tên nhà ga: Gate 1, Gate 01 -> Gate 01
+            const gateNum = parseInt(gateMatch[1], 10).toString().padStart(2, '0');
+            gateName = `Gate ${gateNum}`;
         } else {
             gateName = rawGate.split('-')[0].trim();
         }
@@ -680,12 +682,13 @@ async function uploadToFirestore(aggregatedData, targetDate) {
     showLoading(true, 'Đang lưu dữ liệu lên Cloud Firestore...');
     
     try {
-        // Nếu là Update Mode, xóa dữ liệu cũ của ngày này trước
-        if (isUpdateMode) {
-            const q = query(collection(db, 'gate_statistics'), where('date', '==', targetDate));
-            const snapshot = await getDocs(q);
-            
-            // Xóa theo batch (giới hạn 500 thao tác mỗi batch)
+        // LUÔN xóa dữ liệu cũ của ngày này trước khi ghi mới để tránh trùng lặp dữ liệu
+        // (Ví dụ: khi upload lại file có tên Gate khác nhau hoặc lỗi mạng gây trùng lặp)
+        const q = query(collection(db, 'gate_statistics'), where('date', '==', targetDate));
+        const snapshot = await getDocs(q);
+        
+        if (!snapshot.empty) {
+            console.log(`Phát hiện ${snapshot.size} tài liệu cũ cho ngày ${targetDate}. Đang tiến hành xóa...`);
             let deleteBatch = writeBatch(db);
             let deleteCount = 0;
             
