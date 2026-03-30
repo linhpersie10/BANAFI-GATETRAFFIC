@@ -502,32 +502,8 @@ function processFileData(file, targetDate) {
             skipEmptyLines: true,
             complete: async function(results) {
                 try {
-                    // Tìm dòng bắt đầu dữ liệu (sau dòng header)
-                    let dataStartIndex = 0;
-                    for (let i = 0; i < Math.min(20, results.data.length); i++) {
-                        const row = results.data[i];
-                        // Tìm dòng header dựa trên các từ khóa phổ biến hoặc kiểm tra xem cột 8 có phải là chuỗi không
-                        if (row && row.length > 8 && typeof row[8] === 'string' && (row[8].includes("AccessPointName") || row[8].includes("Gate") || row[8].includes("Cổng"))) {
-                            dataStartIndex = i + 1;
-                            break;
-                        }
-                    }
-                    // Nếu không tìm thấy header rõ ràng, thử tìm dòng đầu tiên có dữ liệu hợp lệ
-                    if (dataStartIndex === 0) {
-                        for (let i = 0; i < Math.min(20, results.data.length); i++) {
-                            const row = results.data[i];
-                            if (row && row.length > 13 && row[0] && row[8] && row[13]) {
-                                // Kiểm tra xem row[0] có vẻ là ngày tháng không
-                                const timeStr = row[0].toString();
-                                if (timeStr.match(/\d{1,2}:\d{2}/) || !isNaN(Date.parse(timeStr))) {
-                                    dataStartIndex = i;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    const rawData = results.data.slice(dataStartIndex);
+                    // Bỏ qua 10 dòng đầu tiên (metadata)
+                    const rawData = results.data.slice(10);
                     await aggregateAndUpload(rawData, targetDate);
                 } catch (error) {
                     console.error("Lỗi xử lý CSV:", error);
@@ -553,29 +529,8 @@ function processFileData(file, targetDate) {
                 // Convert to array of arrays
                 const results = XLSX.utils.sheet_to_json(worksheet, {header: 1, defval: ""});
                 
-                // Tìm dòng bắt đầu dữ liệu (sau dòng header)
-                let dataStartIndex = 0;
-                for (let i = 0; i < Math.min(20, results.length); i++) {
-                    const row = results[i];
-                    if (row && row.length > 8 && typeof row[8] === 'string' && (row[8].includes("AccessPointName") || row[8].includes("Gate") || row[8].includes("Cổng"))) {
-                        dataStartIndex = i + 1;
-                        break;
-                    }
-                }
-                if (dataStartIndex === 0) {
-                    for (let i = 0; i < Math.min(20, results.length); i++) {
-                        const row = results[i];
-                        if (row && row.length > 13 && row[0] && row[8] && row[13]) {
-                            const timeStr = row[0].toString();
-                            if (timeStr.match(/\d{1,2}:\d{2}/) || !isNaN(Date.parse(timeStr)) || typeof row[0] === 'number') {
-                                dataStartIndex = i;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                const rawData = results.slice(dataStartIndex);
+                // Bỏ qua 10 dòng đầu tiên (metadata)
+                const rawData = results.slice(10);
                 await aggregateAndUpload(rawData, targetDate);
             } catch (error) {
                 console.error("Lỗi xử lý Excel:", error);
@@ -618,19 +573,10 @@ async function aggregateAndUpload(rawData, targetDate) {
             rawTime = rawTime.toString();
         }
 
-        const rawGate = row[8] ? row[8].toString().trim() : ''; // AccessPointName
-        const ticketType = row[13] ? row[13].toString().trim() : ''; // ProductName
+        const rawGate = row[8] ? row[8].toString() : ''; // AccessPointName
+        const ticketType = row[13] ? row[13].toString() : ''; // ProductName
 
         if (!rawTime || !rawGate || !ticketType) return;
-
-        // Bỏ qua các dòng tổng cộng (Summary rows)
-        // Thường các dòng này có tên sản phẩm là "Total" hoặc "Tổng cộng"
-        const isSummaryTicket = ticketType.toLowerCase().includes('total') || ticketType.toLowerCase().includes('tổng') || ticketType.toLowerCase().includes('cộng');
-        
-        if (isSummaryTicket) {
-            console.log(`Bỏ qua dòng tổng cộng: Gate=${rawGate}, Ticket=${ticketType}`);
-            return;
-        }
 
         // 1. Bóc tách Khung giờ (30-minute Bucket)
         let hourBucket = "00:00 - 01:00";
@@ -648,13 +594,22 @@ async function aggregateAndUpload(rawData, targetDate) {
             }
         }
 
-        // 2. Bóc tách Tên Nhà Ga và Lane
-        let gateName = rawGate;
-        let laneName = rawGate;
+        // 2. Bóc tách Tên Nhà Ga
+        let gateName = "Unknown Gate";
+        const gateMatch = rawGate.match(/Gate\s*(\d+)/i);
+        if (gateMatch) {
+            gateName = `Gate ${gateMatch[1]}`;
+        } else {
+            gateName = rawGate.split('-')[0].trim();
+        }
+
+        // 2.5 Bóc tách Tên Lane
+        let laneName = "Unknown Lane";
         const dashIndex = rawGate.indexOf('-');
         if (dashIndex !== -1) {
-            gateName = rawGate.substring(0, dashIndex).trim();
             laneName = rawGate.substring(dashIndex + 1).trim();
+        } else {
+            laneName = rawGate;
         }
 
         // 3. Gom nhóm (Aggregation)
@@ -682,8 +637,14 @@ async function aggregateAndUpload(rawData, targetDate) {
             };
         }
 
-        // Mỗi dòng dữ liệu hợp lệ tương ứng với 1 lượt khách
-        let quantity = 1;
+        // Lấy số lượng vé từ cột C (index 2)
+        let quantity = 0; // Mặc định là 0 nếu không có dữ liệu hợp lệ
+        if (row[2] !== undefined && row[2] !== null && row[2] !== '') {
+            const parsedQuantity = parseInt(row[2].toString().replace(/,/g, ''), 10);
+            if (!isNaN(parsedQuantity)) {
+                quantity = parsedQuantity;
+            }
+        }
 
         // Parse full date/time for lane operating time
         let fullDateObj = null;
@@ -719,13 +680,12 @@ async function uploadToFirestore(aggregatedData, targetDate) {
     showLoading(true, 'Đang lưu dữ liệu lên Cloud Firestore...');
     
     try {
-        // LUÔN xóa dữ liệu cũ của ngày này trước khi ghi mới để tránh trùng lặp dữ liệu
-        // (Ví dụ: khi upload lại file có tên Gate khác nhau hoặc lỗi mạng gây trùng lặp)
-        const q = query(collection(db, 'gate_statistics'), where('date', '==', targetDate));
-        const snapshot = await getDocs(q);
-        
-        if (!snapshot.empty) {
-            console.log(`Phát hiện ${snapshot.size} tài liệu cũ cho ngày ${targetDate}. Đang tiến hành xóa...`);
+        // Nếu là Update Mode, xóa dữ liệu cũ của ngày này trước
+        if (isUpdateMode) {
+            const q = query(collection(db, 'gate_statistics'), where('date', '==', targetDate));
+            const snapshot = await getDocs(q);
+            
+            // Xóa theo batch (giới hạn 500 thao tác mỗi batch)
             let deleteBatch = writeBatch(db);
             let deleteCount = 0;
             
@@ -1299,32 +1259,7 @@ function renderDashboardChart(allHoursSet) {
     });
 }
 
-// --- ONE-TIME DATA WIPE SCRIPT ---
-// Tự động xóa dữ liệu ngày 30/03/2026 một lần duy nhất theo yêu cầu của người dùng
-setTimeout(async () => {
-    if (!localStorage.getItem('wiped_2026_03_30') && db) {
-        try {
-            const q = query(collection(db, 'gate_statistics'), where('date', '==', '2026-03-30'));
-            const snapshot = await getDocs(q);
-            if (!snapshot.empty) {
-                let deleteBatch = writeBatch(db);
-                snapshot.docs.forEach(docSnap => {
-                    deleteBatch.delete(docSnap.ref);
-                });
-                await deleteBatch.commit();
-                console.log("Đã tự động xóa sạch dữ liệu cũ của ngày 2026-03-30 theo yêu cầu.");
-                
-                // Cập nhật lại UI nếu đang ở trang dashboard
-                if (document.getElementById('global-date').value === '2026-03-30') {
-                    loadDashboardData('2026-03-30');
-                }
-            }
-            localStorage.setItem('wiped_2026_03_30', 'true');
-        } catch (e) {
-            console.error("Lỗi khi tự động xóa dữ liệu:", e);
-        }
-    }
-}, 3000); // Đợi Firebase khởi tạo xong
+// --- GATE DETAILS LOGIC ---
 function updateGateSelector() {
     const selector = document.getElementById('gate-selector');
     const prodSelector = document.getElementById('productivity-gate-selector');
