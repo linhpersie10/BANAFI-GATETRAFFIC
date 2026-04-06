@@ -891,6 +891,7 @@ let gatePieChart = null;
 let hourPieChart = null;
 let gateLineChart = null;
 let currentGlobalData = []; // Lưu trữ dữ liệu của ngày đang chọn
+let comparisonGlobalData = []; // Lưu trữ dữ liệu của khung thời gian so sánh
 
 // Bảng màu cố định để đảm bảo tính nhất quán giữa các ngày
 const GATE_COLORS = {
@@ -989,6 +990,7 @@ async function loadDashboardData(dateStr, endDateStr = null) {
     showLoading(true, 'Đang tải dữ liệu báo cáo...');
     
     try {
+        // 1. Tải dữ liệu hiện tại
         let q;
         if (endDateStr && endDateStr !== dateStr) {
             q = query(collection(db, 'gate_statistics'), 
@@ -1004,6 +1006,43 @@ async function loadDashboardData(dateStr, endDateStr = null) {
         snapshot.forEach(doc => {
             currentGlobalData.push(doc.data());
         });
+
+        // 2. Tải dữ liệu so sánh (Hôm qua hoặc Tuần trước)
+        const mode = document.getElementById('view-mode').value;
+        let compStart = null;
+        let compEnd = null;
+
+        if (mode === 'day') {
+            const d = new Date(dateStr);
+            d.setDate(d.getDate() - 1);
+            compStart = d.toISOString().split('T')[0];
+            compEnd = compStart;
+        } else if (mode === 'week') {
+            const dStart = new Date(dateStr);
+            dStart.setDate(dStart.getDate() - 7);
+            compStart = dStart.toISOString().split('T')[0];
+            
+            const dEnd = new Date(endDateStr || dateStr);
+            dEnd.setDate(dEnd.getDate() - 7);
+            compEnd = dEnd.toISOString().split('T')[0];
+        }
+
+        comparisonGlobalData = [];
+        if (compStart) {
+            let qComp;
+            if (compEnd && compEnd !== compStart) {
+                qComp = query(collection(db, 'gate_statistics'), 
+                          where('date', '>=', compStart), 
+                          where('date', '<=', compEnd),
+                          orderBy('date', 'asc'));
+            } else {
+                qComp = query(collection(db, 'gate_statistics'), where('date', '==', compStart));
+            }
+            const compSnapshot = await getDocs(qComp);
+            compSnapshot.forEach(doc => {
+                comparisonGlobalData.push(doc.data());
+            });
+        }
 
         updateDashboardUI();
         updateGateSelector();
@@ -1532,34 +1571,104 @@ function renderGateDetails(gateName) {
         return sumForHour;
     });
 
+    // Dữ liệu so sánh
+    const comparisonDataToProcess = (!gateName || gateName === "") 
+        ? comparisonGlobalData 
+        : comparisonGlobalData.filter(d => d.gateName === gateName);
+
+    const comparisonPassengerCounts = rawHours.map(hour => {
+        let sumForHour = 0;
+        comparisonDataToProcess.forEach(gateData => {
+            if (gateData.hourlyData[hour]) {
+                sumForHour += Object.values(gateData.hourlyData[hour]).reduce((sum, count) => sum + count, 0);
+            }
+        });
+        return sumForHour;
+    });
+
+    const datasets = [
+        {
+            label: chartLabel,
+            data: passengerCounts,
+            borderColor: '#3b82f6',
+            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+            borderWidth: 2,
+            tension: 0.4,
+            fill: true,
+            pointBackgroundColor: '#ffffff',
+            pointBorderColor: '#3b82f6',
+            pointBorderWidth: 2,
+            pointRadius: 4
+        }
+    ];
+
+    // Thêm line so sánh nếu có dữ liệu
+    if (comparisonPassengerCounts.some(c => c > 0)) {
+        const mode = document.getElementById('view-mode').value;
+        const compLabel = mode === 'week' ? 'Tuần trước' : 'Hôm qua';
+        datasets.push({
+            label: `${compLabel} (So sánh)`,
+            data: comparisonPassengerCounts,
+            borderColor: '#94a3b8', // Slate 400
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            borderDash: [5, 5], // Nét đứt
+            tension: 0.4,
+            fill: false,
+            pointRadius: 0, // Ẩn điểm cho line so sánh
+            pointHitRadius: 10
+        });
+    }
+
     gateLineChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: displayHours,
-            datasets: [{
-                label: chartLabel,
-                data: passengerCounts,
-                borderColor: '#3b82f6',
-                backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                borderWidth: 2,
-                tension: 0.4,
-                fill: true,
-                pointBackgroundColor: '#ffffff',
-                pointBorderColor: '#3b82f6',
-                pointBorderWidth: 2,
-                pointRadius: 4
-            }]
+            datasets: datasets
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
             plugins: {
-                legend: { display: false },
-                tooltip: { mode: 'index', intersect: false }
+                legend: {
+                    display: true,
+                    position: 'bottom',
+                    labels: { usePointStyle: true, padding: 20 }
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.dataset.label || '';
+                            if (label) {
+                                label += ': ';
+                            }
+                            if (context.parsed.y !== null) {
+                                label += context.parsed.y.toLocaleString('vi-VN') + ' vé';
+                            }
+                            return label;
+                        }
+                    }
+                }
             },
             scales: {
-                x: { grid: { display: false } },
-                y: { beginAtZero: true, grid: { borderDash: [2, 4], color: '#e2e8f0' } }
+                x: {
+                    grid: { display: false }
+                },
+                y: {
+                    beginAtZero: true,
+                    grid: { borderDash: [2, 4], color: '#e2e8f0' },
+                    ticks: {
+                        callback: function(value) {
+                            return value.toLocaleString('vi-VN');
+                        }
+                    }
+                }
             }
         }
     });
@@ -1650,10 +1759,30 @@ function renderGateDetails(gateName) {
 
 // --- PRODUCTIVITY LOGIC ---
 const TASKFORCES = {
-    'soat-ve': { name: 'Soát vé', kpiLabel: 'Tỷ lệ chính xác', unit: '%' },
-    'sai-sot': { name: 'Phát hiện sai sót', kpiLabel: 'Số lỗi phát hiện', unit: ' lỗi' },
-    'tu-van': { name: 'Tư vấn khách hàng', kpiLabel: 'Điểm hài lòng', unit: '/5' },
-    'dieu-phoi': { name: 'Điều phối luồng khách', kpiLabel: 'Điểm lưu thông', unit: '/100' }
+    'soat-ve': { 
+        name: 'Soát vé', 
+        kpiLabel: 'Tỷ lệ chính xác', 
+        unit: '%',
+        colLabels: ['Target SL', 'Target TG', 'Thực tế SL', 'Thực tế TG']
+    },
+    'sai-sot': { 
+        name: 'Phát hiện sai sót', 
+        kpiLabel: 'Số lỗi phát hiện', 
+        unit: ' lỗi',
+        colLabels: ['Target Phát hiện', 'Target Khắc phục', 'Thực tế Phát hiện', 'Thực tế Khắc phục']
+    },
+    'tu-van': { 
+        name: 'Tư vấn khách hàng', 
+        kpiLabel: 'Điểm hài lòng', 
+        unit: '/5',
+        colLabels: ['Target Feedback', 'Target Rate', 'Thực tế Feedback', 'Thực tế Rate']
+    },
+    'dieu-phoi': { 
+        name: 'Điều phối luồng khách', 
+        kpiLabel: 'Điểm lưu thông', 
+        unit: '/100',
+        colLabels: ['Target Flow', 'Target Density', 'Thực tế Flow', 'Thực tế Density']
+    }
 };
 
 function renderProductivityTable() {
@@ -1661,7 +1790,7 @@ function renderProductivityTable() {
     const tbody = document.getElementById('productivity-table-body');
     
     if (!gateName) {
-        tbody.innerHTML = '<tr><td colspan="4" class="px-6 py-12 text-center text-slate-500"><div class="flex flex-col items-center gap-2"><i class="fas fa-info-circle text-2xl text-slate-300"></i><p>Vui lòng chọn nhà ga để xem báo cáo năng suất</p></div></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="px-6 py-12 text-center text-slate-500"><div class="flex flex-col items-center gap-2"><i class="fas fa-info-circle text-2xl text-slate-300"></i><p>Vui lòng chọn nhà ga để xem báo cáo năng suất</p></div></td></tr>';
         return;
     }
 
@@ -1672,8 +1801,17 @@ function renderProductivityTable() {
     const selectedTaskforces = Array.from(document.querySelectorAll('input[name="taskforce"]:checked')).map(cb => cb.value);
     
     if (selectedTaskforces.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="px-6 py-12 text-center text-slate-500"><div class="flex flex-col items-center gap-2"><i class="fas fa-exclamation-circle text-2xl text-slate-300"></i><p>Vui lòng chọn ít nhất một Taskforce</p></div></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="px-6 py-12 text-center text-slate-500"><div class="flex flex-col items-center gap-2"><i class="fas fa-exclamation-circle text-2xl text-slate-300"></i><p>Vui lòng chọn ít nhất một Taskforce</p></div></td></tr>';
         return;
+    }
+
+    // Update Headers based on the first selected taskforce (or generic if multiple)
+    const firstTf = TASKFORCES[selectedTaskforces[0]];
+    if (firstTf && firstTf.colLabels) {
+        document.getElementById('kpi-header-1').textContent = firstTf.colLabels[0];
+        document.getElementById('kpi-header-2').textContent = firstTf.colLabels[1];
+        document.getElementById('kpi-header-3').textContent = firstTf.colLabels[2];
+        document.getElementById('kpi-header-4').textContent = firstTf.colLabels[3];
     }
 
     // Determine number of employees based on unique lanes across all selected days
@@ -1694,23 +1832,41 @@ function renderProductivityTable() {
             const kpiValue = generateMockKPI(tfKey, i);
             const status = getKPIStatus(tfKey, kpiValue);
             
+            let displayKPI = kpiValue;
+            let val1 = '---';
+            let val2 = '---';
+            let val3 = '---';
+            let val4 = '---';
+
+            if (typeof kpiValue === 'object') {
+                displayKPI = kpiValue.efficiency;
+                val1 = kpiValue.val1 || '---';
+                val2 = kpiValue.val2 || '---';
+                val3 = kpiValue.val3 || '---';
+                val4 = kpiValue.val4 || '---';
+            }
+
             const tr = document.createElement('tr');
             tr.className = 'hover:bg-slate-50 transition-colors';
             tr.innerHTML = `
-                <td class="px-6 py-4 font-medium text-slate-700">${empName}</td>
-                <td class="px-6 py-4 text-center">
-                    <span class="px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-600 border border-indigo-100">
+                <td class="px-4 py-3 font-medium text-slate-700 whitespace-nowrap">${empName}</td>
+                <td class="px-4 py-3 text-center whitespace-nowrap">
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-100">
                         ${tf.name}
                     </span>
                 </td>
-                <td class="px-6 py-4 text-right font-bold text-slate-800">
-                    ${kpiValue}${tf.unit}
+                <td class="px-4 py-3 text-right font-bold text-slate-800 whitespace-nowrap">
+                    ${displayKPI}${tf.unit}
                 </td>
-                <td class="px-6 py-4 text-center">
-                    <span class="px-2.5 py-1 rounded-full text-xs font-bold ${status.class}">
+                <td class="px-4 py-3 text-center whitespace-nowrap">
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${status.class}">
                         ${status.text}
                     </span>
                 </td>
+                <td class="px-4 py-3 text-right text-slate-600 font-medium whitespace-nowrap">${val1}</td>
+                <td class="px-4 py-3 text-right text-slate-600 font-medium whitespace-nowrap">${val2}</td>
+                <td class="px-4 py-3 text-right text-indigo-600 font-bold whitespace-nowrap">${val3}</td>
+                <td class="px-4 py-3 text-right text-indigo-600 font-bold whitespace-nowrap">${val4}</td>
             `;
             tbody.appendChild(tr);
         });
@@ -1723,16 +1879,51 @@ function generateMockKPI(tfKey, index) {
     const rand = (Math.sin(seed) + 1) / 2; // 0 to 1
     
     switch(tfKey) {
-        case 'soat-ve': return (95 + rand * 4.9).toFixed(1);
-        case 'sai-sot': return Math.floor(5 + rand * 15);
-        case 'tu-van': return (4.2 + rand * 0.8).toFixed(1);
-        case 'dieu-phoi': return Math.floor(80 + rand * 20);
+        case 'soat-ve': 
+            return {
+                efficiency: (95 + rand * 4.9).toFixed(1),
+                val1: 500,
+                val2: '15s/vé',
+                val3: Math.floor(480 + rand * 40),
+                val4: (12 + rand * 6).toFixed(1) + 's/vé'
+            };
+        case 'sai-sot': 
+            const detected = Math.floor(10 + rand * 20);
+            return {
+                efficiency: detected,
+                val1: 20, // Target detected
+                val2: 15, // Target rectified
+                val3: detected, // Actual detected
+                val4: Math.floor(detected * (0.8 + rand * 0.2)) // Actual rectified
+            };
+        case 'tu-van': 
+            return {
+                efficiency: (4.2 + rand * 0.8).toFixed(1),
+                val1: '100%',
+                val2: '4.5/5',
+                val3: '98%',
+                val4: (4.0 + rand * 1.0).toFixed(1) + '/5'
+            };
+        case 'dieu-phoi': 
+            return {
+                efficiency: Math.floor(80 + rand * 20),
+                val1: '90/100',
+                val2: '< 5p',
+                val3: Math.floor(85 + rand * 15) + '/100',
+                val4: Math.floor(3 + rand * 4) + 'p'
+            };
         default: return 0;
     }
 }
 
 function getKPIStatus(tfKey, value) {
-    const val = parseFloat(value);
+    let val;
+    if (typeof value === 'object') {
+        val = parseFloat(value.efficiency);
+    } else {
+        val = parseFloat(value);
+    }
+    
     switch(tfKey) {
         case 'soat-ve': 
             if (val >= 98) return { text: 'Xuất sắc', class: 'bg-emerald-50 text-emerald-600 border border-emerald-100' };
