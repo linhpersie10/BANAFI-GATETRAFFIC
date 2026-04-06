@@ -14,15 +14,11 @@ async function initFirebase() {
         const app = initializeApp(config);
         db = getFirestore(app, config.firestoreDatabaseId);
         
-        // Tính toán ngày mặc định dựa trên thời gian thực tế (Rule 20h)
-        const defaultDate = getDefaultDateByTime();
+        // Populate weeks for the selector
+        populateWeekSelector();
         
-        // Kiểm tra xem ngày này có dữ liệu không, nếu không thì fallback về ngày gần nhất có trong DB
-        let finalDate = defaultDate;
-        const exists = await checkDataExists(defaultDate);
-        if (!exists) {
-            finalDate = await findLatestDate();
-        }
+        // Luôn lấy ngày có dữ liệu gần nhất trong DB cho lần tải đầu tiên
+        const finalDate = await findLatestDate();
         
         document.getElementById('global-date').value = finalDate;
         document.getElementById('upload-date').value = finalDate;
@@ -34,32 +30,49 @@ async function initFirebase() {
     }
 }
 
-function getDefaultDateByTime() {
+function populateWeekSelector() {
+    const selector = document.getElementById('week-selector');
+    if (!selector) return;
+    selector.innerHTML = '';
+    
     const now = new Date();
-    const hours = now.getHours();
+    const year = now.getFullYear();
     
-    let targetDate = new Date(now);
-    if (hours < 20) {
-        // Trước 20h: Lấy ngày hôm trước
-        targetDate.setDate(now.getDate() - 1);
+    // Find the first Sunday of the year
+    let d = new Date(year, 0, 1);
+    while (d.getDay() !== 0) {
+        d.setDate(d.getDate() + 1);
     }
-    // Sau 20h: Lấy ngày hiện tại (mặc định)
     
-    const year = targetDate.getFullYear();
-    const month = (targetDate.getMonth() + 1).toString().padStart(2, '0');
-    const day = targetDate.getDate().toString().padStart(2, '0');
+    // If the first Sunday is too far into January, check if we should start from the last Sunday of previous year
+    // But usually week 1 starts with the first Sunday or the week containing Jan 1st.
+    // Let's stick to the first Sunday of the year for simplicity as requested "week 1 to 53".
     
-    return `${year}-${month}-${day}`;
-}
-
-async function checkDataExists(dateStr) {
-    try {
-        const q = query(collection(db, 'gate_statistics'), where('date', '==', dateStr), limit(1));
-        const snapshot = await getDocs(q);
-        return !snapshot.empty;
-    } catch (error) {
-        console.error("Lỗi kiểm tra dữ liệu tồn tại:", error);
-        return false;
+    for (let i = 1; i <= 53; i++) {
+        const start = new Date(d);
+        const end = new Date(d);
+        end.setDate(d.getDate() + 6);
+        
+        // Stop if we've moved too far into the next year
+        if (start.getFullYear() > year && i > 1) break;
+        
+        const startStr = start.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        const endStr = end.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        const value = `${start.toISOString().split('T')[0]}|${end.toISOString().split('T')[0]}`;
+        
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = `Tuần ${i} (${startStr} - ${endStr})`;
+        
+        // Select current week if possible
+        if (now >= start && now <= end) {
+            option.selected = true;
+        }
+        
+        selector.appendChild(option);
+        
+        // Move to next Sunday
+        d.setDate(d.getDate() + 7);
     }
 }
 
@@ -79,8 +92,12 @@ async function findLatestDate() {
 
 // --- AUTHENTICATION ---
 function setupAuthListeners() {
-    const loginBtns = [document.getElementById('login-btn'), document.getElementById('mobile-login-btn')];
-    const logoutBtns = [document.getElementById('logout-btn'), document.getElementById('mobile-logout-btn')];
+    const loginBtns = [
+        document.getElementById('tab-login-btn')
+    ];
+    const logoutBtns = [
+        document.getElementById('tab-logout-btn')
+    ];
     const userName = document.getElementById('user-name');
     const loginModal = document.getElementById('login-modal');
     const loginIdInput = document.getElementById('login-id');
@@ -96,28 +113,39 @@ function setupAuthListeners() {
     }
 
     const updateAuthUI = () => {
+        const mode = document.getElementById('view-mode').value;
+        const currentDate = document.getElementById('global-date').value;
+        const uploadDate = document.getElementById('upload-date').value;
+
         if (currentUser) {
             if (userName) userName.textContent = currentUser.displayName;
+            // Sidebar/Header buttons are hidden in HTML, but we keep the logic for consistency
             loginBtns.forEach(btn => btn?.classList.add('hidden'));
             logoutBtns.forEach(btn => btn?.classList.remove('hidden'));
             
-            // Tải dữ liệu khi đã đăng nhập
-            const currentDate = document.getElementById('global-date').value;
-            if (currentDate) loadDashboardData(currentDate);
-            
-            const uploadDate = document.getElementById('upload-date').value;
+            // Tải dữ liệu dựa trên mode hiện tại
+            if (mode === 'week') {
+                handleWeekChange();
+            } else if (currentDate) {
+                loadDashboardData(currentDate);
+            }
             if (uploadDate) checkExistingData(uploadDate);
         } else {
             if (userName) userName.textContent = 'Chưa đăng nhập';
             loginBtns.forEach(btn => btn?.classList.remove('hidden'));
             logoutBtns.forEach(btn => btn?.classList.add('hidden'));
-            clearDashboard();
             
-            // Reset upload UI state when logged out
-            const dataStatusBadge = document.getElementById('data-status-badge');
-            if (dataStatusBadge) dataStatusBadge.classList.add('hidden');
-            checkUploadReadiness();
+            // Tải dữ liệu dựa trên mode hiện tại
+            if (mode === 'week') {
+                handleWeekChange();
+            } else if (currentDate) {
+                loadDashboardData(currentDate);
+            }
+            
+            // Cập nhật trạng thái upload
+            if (uploadDate) checkExistingData(uploadDate);
         }
+        checkUploadReadiness();
     };
 
     loginBtns.forEach(btn => btn?.addEventListener('click', () => {
@@ -348,11 +376,7 @@ uploadDateInput.addEventListener('change', (e) => {
 });
 
 async function checkExistingData(dateStr) {
-    if (!currentUser || !db) {
-        dataStatusBadge.classList.add('hidden');
-        checkUploadReadiness();
-        return;
-    }
+    if (!db) return;
     
     dataStatusBadge.classList.remove('hidden', 'bg-emerald-100', 'text-emerald-700', 'bg-amber-100', 'text-amber-700');
     dataStatusBadge.classList.add('bg-slate-100', 'text-slate-600');
@@ -416,6 +440,10 @@ function checkUploadReadiness() {
 }
 
 deleteDataBtn.addEventListener('click', () => {
+    if (!currentUser) {
+        showNotification("Lỗi bảo mật", "Bạn phải đăng nhập để thực hiện thao tác này.", "error");
+        return;
+    }
     const dateStr = uploadDateInput.value;
     if (!dateStr) return;
     
@@ -743,6 +771,11 @@ async function aggregateAndUpload(rawData, targetDate) {
  * Sử dụng Batch Write để tối ưu hiệu suất và đảm bảo tính toàn vẹn (Atomic)
  */
 async function uploadToFirestore(aggregatedData, targetDate) {
+    if (!currentUser) {
+        showNotification("Lỗi bảo mật", "Bạn phải đăng nhập để thực hiện thao tác này.", "error");
+        showLoading(false);
+        return;
+    }
     showLoading(true, 'Đang lưu dữ liệu lên Cloud Firestore...');
     
     try {
@@ -859,18 +892,112 @@ let hourPieChart = null;
 let gateLineChart = null;
 let currentGlobalData = []; // Lưu trữ dữ liệu của ngày đang chọn
 
-document.getElementById('global-date').addEventListener('change', (e) => {
-    if (e.target.value && currentUser) {
-        loadDashboardData(e.target.value);
+// Bảng màu cố định để đảm bảo tính nhất quán giữa các ngày
+const GATE_COLORS = {
+    'Gate 1': '#6366f1', // Indigo
+    'Gate 2': '#f59e0b', // Amber
+    'Gate 3': '#10b981', // Emerald
+    'Gate 4': '#ef4444', // Rose
+    'Gate 5': '#8b5cf6', // Violet
+    'Gate 6': '#06b6d4', // Cyan
+    'Gate 7': '#f97316', // Orange
+    'Gate 8': '#64748b', // Slate
+    'Gate 9': '#ec4899', // Pink
+    'Gate 10': '#84cc16', // Lime
+    'Gate 11': '#14b8a6', // Teal
+    'Gate 12': '#3b82f6', // Blue
+    'Gate 13': '#d946ef', // Fuchsia
+    'Gate 14': '#facc15', // Yellow
+    'Gate 15': '#475569'  // Dark Slate
+};
+
+const DEFAULT_COLORS = [
+    '#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', 
+    '#06b6d4', '#f97316', '#64748b', '#ec4899', '#84cc16',
+    '#14b8a6', '#3b82f6', '#d946ef', '#facc15', '#475569'
+];
+
+function getGateColor(gateName, index) {
+    return GATE_COLORS[gateName] || DEFAULT_COLORS[index % DEFAULT_COLORS.length];
+}
+
+function getHourColor(hourLabel, index) {
+    // Có thể dùng logic cố định cho giờ nếu muốn, hiện tại dùng index từ mảng màu mặc định
+    return DEFAULT_COLORS[index % DEFAULT_COLORS.length];
+}
+
+document.getElementById('view-mode').addEventListener('change', (e) => {
+    const mode = e.target.value;
+    const datePicker = document.getElementById('date-picker-container');
+    const weekPicker = document.getElementById('week-picker-container');
+    const dateEnd = document.getElementById('global-date-end');
+    const separator = document.getElementById('date-range-separator');
+    const dateStart = document.getElementById('global-date');
+
+    if (mode === 'range') {
+        datePicker.classList.remove('hidden');
+        weekPicker.classList.add('hidden');
+        weekPicker.classList.remove('flex');
+        dateEnd.classList.remove('hidden');
+        separator.classList.remove('hidden');
+    } else if (mode === 'week') {
+        datePicker.classList.add('hidden');
+        weekPicker.classList.remove('hidden');
+        weekPicker.classList.add('flex');
+        handleWeekChange();
+    } else {
+        datePicker.classList.remove('hidden');
+        weekPicker.classList.add('hidden');
+        weekPicker.classList.remove('flex');
+        dateEnd.classList.add('hidden');
+        separator.classList.add('hidden');
+        if (dateStart.value) {
+            handleDateChange();
+        }
     }
 });
 
-async function loadDashboardData(dateStr) {
+document.getElementById('global-date').addEventListener('change', handleDateChange);
+document.getElementById('global-date-end').addEventListener('change', handleDateChange);
+document.getElementById('week-selector').addEventListener('change', handleWeekChange);
+
+function handleWeekChange() {
+    const weekVal = document.getElementById('week-selector').value;
+    if (!weekVal) return;
+    const [start, end] = weekVal.split('|');
+    loadDashboardData(start, end);
+}
+
+function handleDateChange() {
+    const mode = document.getElementById('view-mode').value;
+    const dateStart = document.getElementById('global-date').value;
+    const dateEnd = document.getElementById('global-date-end').value;
+
+    if (!dateStart) return;
+
+    if (mode === 'day') {
+        loadDashboardData(dateStart);
+    } else if (mode === 'range') {
+        if (dateEnd) {
+            loadDashboardData(dateStart, dateEnd);
+        }
+    }
+}
+
+async function loadDashboardData(dateStr, endDateStr = null) {
     if (!db) return;
     showLoading(true, 'Đang tải dữ liệu báo cáo...');
     
     try {
-        const q = query(collection(db, 'gate_statistics'), where('date', '==', dateStr));
+        let q;
+        if (endDateStr && endDateStr !== dateStr) {
+            q = query(collection(db, 'gate_statistics'), 
+                      where('date', '>=', dateStr), 
+                      where('date', '<=', endDateStr),
+                      orderBy('date', 'asc'));
+        } else {
+            q = query(collection(db, 'gate_statistics'), where('date', '==', dateStr));
+        }
         const snapshot = await getDocs(q);
         
         currentGlobalData = [];
@@ -953,23 +1080,25 @@ function updateDashboardKPIs(selectedGateName) {
     const ticketTotals = {};
     const gateTotals = {};
     
+    // Aggregate gateTotals first (across all days in currentGlobalData)
+    currentGlobalData.forEach(gateData => {
+        gateTotals[gateData.gateName] = (gateTotals[gateData.gateName] || 0) + gateData.totalPassengers;
+    });
+
     // Nếu có chọn nhà ga, chỉ tính toán trên nhà ga đó
     const dataToProcess = selectedGateName 
         ? currentGlobalData.filter(g => g.gateName === selectedGateName)
         : currentGlobalData;
         
-    // Vẫn cần tìm nhà ga đông nhất từ toàn bộ dữ liệu nếu không chọn nhà ga cụ thể
-    if (!selectedGateName) {
-        currentGlobalData.forEach(gateData => {
-            if (gateData.totalPassengers > topGate.count) {
-                topGate = { name: gateData.gateName, count: gateData.totalPassengers };
-            }
-        });
-    }
+    // Tìm nhà ga đông nhất từ toàn bộ dữ liệu
+    Object.entries(gateTotals).forEach(([name, count]) => {
+        if (count > topGate.count) {
+            topGate = { name, count };
+        }
+    });
 
     dataToProcess.forEach(gateData => {
         totalPassengers += gateData.totalPassengers;
-        gateTotals[gateData.gateName] = gateData.totalPassengers;
 
         Object.keys(gateData.hourlyData).forEach(hour => {
             let hourTotal = 0;
@@ -1049,11 +1178,6 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
     if (gatePieChart) gatePieChart.destroy();
     if (hourPieChart) hourPieChart.destroy();
     
-    const colors = [
-        '#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', 
-        '#06b6d4', '#f97316', '#64748b', '#ec4899', '#84cc16'
-    ];
-
     const commonOptions = {
         responsive: true,
         maintainAspectRatio: false,
@@ -1085,6 +1209,7 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
     // Gate Pie Chart
     const gateLabels = Object.keys(gateTotals);
     const gateData = Object.values(gateTotals);
+    const gateColors = gateLabels.map((label, idx) => getGateColor(label, idx));
     
     gatePieChart = new Chart(gateCtx, {
         type: 'doughnut',
@@ -1092,7 +1217,7 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
             labels: gateLabels,
             datasets: [{
                 data: gateData,
-                backgroundColor: colors,
+                backgroundColor: gateColors,
                 borderWidth: 2,
                 borderColor: '#ffffff',
                 hoverOffset: 12
@@ -1113,6 +1238,7 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
     
     const hourLabelsShort = filteredHours.map(h => parseInt(h.split(':')[0]) + 'h');
     const hourData = filteredHours.map(h => hourlyTotals[h]);
+    const hourColors = hourLabelsShort.map((label, idx) => getHourColor(label, idx));
     
     hourPieChart = new Chart(hourCtx, {
         type: 'doughnut',
@@ -1120,7 +1246,7 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
             labels: hourLabelsShort,
             datasets: [{
                 data: hourData,
-                backgroundColor: colors,
+                backgroundColor: hourColors,
                 borderWidth: 2,
                 borderColor: '#ffffff',
                 hoverOffset: 12
@@ -1197,31 +1323,32 @@ function renderDashboardChart(allHoursSet) {
         }
     });
 
-    // Tạo mảng màu sắc ngẫu nhiên nhưng cố định cho các nhà ga
-    const colors = [
-        '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', 
-        '#06b6d4', '#f97316', '#64748b', '#ec4899', '#84cc16'
-    ];
-
-    const datasets = currentGlobalData.map((gateData, index) => {
+    const datasets = [];
+    const gateNames = Array.from(new Set(currentGlobalData.map(d => d.gateName)));
+    
+    gateNames.forEach((gateName, index) => {
+        const gateDataArray = currentGlobalData.filter(d => d.gateName === gateName);
+        
         const data = hourlyLabels.map(hourLabel => {
             let totalForHour = 0;
             rawLabels.forEach(bucket => {
                 if (parseInt(bucket.split(':')[0]) + 'h' === hourLabel) {
-                    if (gateData.hourlyData[bucket]) {
-                        totalForHour += Object.values(gateData.hourlyData[bucket]).reduce((sum, count) => sum + count, 0);
-                    }
+                    gateDataArray.forEach(gateData => {
+                        if (gateData.hourlyData[bucket]) {
+                            totalForHour += Object.values(gateData.hourlyData[bucket]).reduce((sum, count) => sum + count, 0);
+                        }
+                    });
                 }
             });
             return totalForHour;
         });
 
-        return {
-            label: gateData.gateName,
+        datasets.push({
+            label: gateName,
             data: data,
-            backgroundColor: colors[index % colors.length],
+            backgroundColor: getGateColor(gateName, index),
             borderWidth: 0
-        };
+        });
     });
 
     dashboardChart = new Chart(ctx, {
@@ -1334,8 +1461,8 @@ function updateGateSelector() {
     selector.innerHTML = '<option value="">-- Chọn nhà ga --</option>';
     if (prodSelector) prodSelector.innerHTML = '<option value="">-- Chọn nhà ga --</option>';
     
-    // Sắp xếp tên nhà ga theo thứ tự alphabet
-    const gateNames = currentGlobalData.map(d => d.gateName).sort();
+    // Lấy danh sách duy nhất các nhà ga và sắp xếp theo thứ tự alphabet
+    const gateNames = Array.from(new Set(currentGlobalData.map(d => d.gateName))).sort();
     
     gateNames.forEach(name => {
         const option = document.createElement('option');
@@ -1349,8 +1476,8 @@ function updateGateSelector() {
         }
     });
 
-    // Tự động chọn "Tất cả nhà ga" (giá trị rỗng) làm mặc định
-    if (gateNames.length > 0) {
+    // Tự động chọn "Tất cả nhà ga" (giá trị rỗng) làm mặc định nếu chưa chọn gì
+    if (gateNames.length > 0 && !selector.value) {
         selector.value = "";
         renderGateDetails("");
     }
@@ -1372,10 +1499,9 @@ function renderGateDetails(gateName) {
         dataToProcess = currentGlobalData;
         chartLabel = 'Lưu lượng khách - Tất cả nhà ga';
     } else {
-        // Chỉ lấy nhà ga được chọn
-        const gateData = currentGlobalData.find(d => d.gateName === gateName);
-        if (!gateData) return;
-        dataToProcess = [gateData];
+        // Chỉ lấy nhà ga được chọn (tất cả các ngày của nhà ga đó)
+        dataToProcess = currentGlobalData.filter(d => d.gateName === gateName);
+        if (dataToProcess.length === 0) return;
         chartLabel = `Lưu lượng khách - ${gateName}`;
     }
 
@@ -1539,8 +1665,8 @@ function renderProductivityTable() {
         return;
     }
 
-    const gateData = currentGlobalData.find(d => d.gateName === gateName);
-    if (!gateData) return;
+    const gateDataArray = currentGlobalData.filter(d => d.gateName === gateName);
+    if (gateDataArray.length === 0) return;
 
     // Get selected taskforces
     const selectedTaskforces = Array.from(document.querySelectorAll('input[name="taskforce"]:checked')).map(cb => cb.value);
@@ -1550,8 +1676,12 @@ function renderProductivityTable() {
         return;
     }
 
-    // Determine number of employees based on lanes
-    const laneCount = gateData.laneData ? Object.keys(gateData.laneData).length : 4;
+    // Determine number of employees based on unique lanes across all selected days
+    const allLanes = new Set();
+    gateDataArray.forEach(d => {
+        if (d.laneData) Object.keys(d.laneData).forEach(l => allLanes.add(l));
+    });
+    const laneCount = allLanes.size || 4;
     const employeeCount = Math.max(laneCount, 3); // At least 3 employees
 
     tbody.innerHTML = '';

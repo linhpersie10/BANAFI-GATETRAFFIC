@@ -21,6 +21,10 @@
           "type": "object",
           "description": "Map of Hour Bucket (e.g., '12:00 - 13:00') to a map of Ticket Type to Count."
         },
+        "laneData": {
+          "type": "object",
+          "description": "Map of Lane Name to Count and Duration."
+        },
         "updatedAt": {
           "type": "string",
           "format": "date-time",
@@ -28,6 +32,47 @@
         }
       },
       "required": ["date", "gateName", "totalPassengers", "hourlyData", "updatedAt"]
+    },
+    "DailySummary": {
+      "title": "DailySummary",
+      "description": "Aggregated daily summary for the entire facility.",
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "description": "The date of the summary in YYYY-MM-DD format."
+        },
+        "totalPassengers": {
+          "type": "number",
+          "description": "Total number of passengers for the entire facility on this date."
+        },
+        "gateTotals": {
+          "type": "object",
+          "description": "Map of Gate Name to Total Count."
+        },
+        "hourlyTotals": {
+          "type": "object",
+          "description": "Map of Hour Bucket to Total Count (summed across all gates)."
+        },
+        "ticketTotals": {
+          "type": "object",
+          "description": "Map of Ticket Type to Total Count (summed across all gates)."
+        },
+        "gateHourlyTotals": {
+          "type": "object",
+          "description": "Map of Gate Name to its Hourly Breakdown (Gate -> Hour -> Total)."
+        },
+        "gateTicketTotals": {
+          "type": "object",
+          "description": "Map of Gate Name to its Ticket Breakdown (Gate -> Ticket -> Total)."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of the last update."
+        }
+      },
+      "required": ["date", "totalPassengers", "gateTotals", "hourlyTotals", "ticketTotals", "updatedAt"]
     }
   },
   "firestore": {
@@ -36,6 +81,12 @@
         "$ref": "#/entities/GateStatistic"
       },
       "description": "Stores daily aggregated passenger statistics per gate."
+    },
+    "daily_summaries/{date}": {
+      "schema": {
+        "$ref": "#/entities/DailySummary"
+      },
+      "description": "Stores daily aggregated summary for the entire facility."
     }
   }
 }
