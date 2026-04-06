@@ -226,41 +226,39 @@
                 </div>
 
                 <!-- Main Charts Section -->
-                <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6">
                     <!-- Left Column: Bar Chart (Priority) -->
-                    <div class="lg:col-span-9 bg-white rounded-xl p-6 shadow-sm border border-slate-200/60 flex flex-col h-[600px]">
-                        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6">Lưu lượng khách theo khung giờ</h3>
+                    <div class="lg:col-span-8 xl:col-span-9 bg-white rounded-xl p-4 md:p-5 shadow-sm border border-slate-200/60 flex flex-col h-[400px] md:h-[450px]">
+                        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Lưu lượng khách theo khung giờ</h3>
                         <div class="flex-1 w-full relative">
                             <canvas id="dashboard-chart"></canvas>
                         </div>
                     </div>
 
                     <!-- Right Column: Pie Charts (Approx 30%) -->
-                    <div class="lg:col-span-3 space-y-6">
-                        <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60 flex flex-col h-64">
-                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 px-2">Cơ cấu theo Nhà Ga</h3>
-                            <div class="flex-1 w-full relative">
+                    <div class="lg:col-span-4 xl:col-span-3 flex flex-col gap-4 md:gap-6 h-[400px] md:h-[450px]">
+                        <div class="bg-white rounded-xl p-3 md:p-4 shadow-sm border border-slate-200/60 flex flex-col flex-1 min-h-0">
+                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 px-1">Cơ cấu theo Nhà Ga</h3>
+                            <div class="flex-1 w-full relative min-h-0">
                                 <canvas id="gate-pie-chart"></canvas>
                             </div>
-                            <div id="gate-pie-legend" class="flex flex-row overflow-x-auto whitespace-nowrap gap-4 w-full py-1 text-xs scrollbar-hide"></div>
                         </div>
-                        <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60 flex flex-col h-64">
-                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 px-2">Cơ cấu theo Khung giờ</h3>
-                            <div class="flex-1 w-full relative">
+                        <div class="bg-white rounded-xl p-3 md:p-4 shadow-sm border border-slate-200/60 flex flex-col flex-1 min-h-0">
+                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 px-1">Cơ cấu theo Khung giờ</h3>
+                            <div class="flex-1 w-full relative min-h-0">
                                 <canvas id="hour-pie-chart"></canvas>
                             </div>
-                            <div id="hour-pie-legend" class="flex flex-row overflow-x-auto whitespace-nowrap gap-4 w-full py-1 text-xs scrollbar-hide"></div>
                         </div>
                     </div>
                 </div>
             </div>
 
             <!-- TAB 2: GATE DETAILS -->
-            <div id="tab-gate-details" class="tab-content hidden space-y-6">
+            <div id="tab-gate-details" class="tab-content hidden space-y-4 md:space-y-6">
                 <!-- Combined Header and Chart -->
-                <div class="bg-white rounded-xl p-6 shadow-sm border border-slate-200/60">
-                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-                        <h3 class="text-lg font-bold text-slate-800">Xu hướng lưu lượng</h3>
+                <div class="bg-white rounded-xl p-4 md:p-5 shadow-sm border border-slate-200/60">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4 md:mb-5">
+                        <h3 class="text-base md:text-lg font-bold text-slate-800">Xu hướng lưu lượng</h3>
                         <div class="flex items-center gap-3 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
                             <label class="text-sm font-medium text-slate-600">Nhà Ga:</label>
                             <select id="gate-selector" class="bg-transparent border-none outline-none text-slate-700 font-semibold cursor-pointer min-w-[150px]">
@@ -268,15 +266,15 @@
                             </select>
                         </div>
                     </div>
-                    <div class="h-[300px] w-full relative">
+                    <div class="h-[280px] md:h-[300px] w-full relative">
                         <canvas id="gate-line-chart"></canvas>
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
                     <!-- Ticket Types Table -->
-                    <div class="bg-white rounded-xl p-6 shadow-sm border border-slate-200/60 flex flex-col h-[400px]">
-                        <h3 class="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <div class="bg-white rounded-xl p-4 md:p-5 shadow-sm border border-slate-200/60 flex flex-col h-[350px] md:h-[400px]">
+                        <h3 class="text-base font-bold text-slate-800 mb-3 md:mb-4 flex items-center gap-2">
                             <i class="fas fa-ticket-alt text-blue-500"></i>
                             Cơ cấu loại vé
                         </h3>
@@ -296,8 +294,8 @@
                     </div>
 
                     <!-- Lane Statistics -->
-                    <div class="bg-white rounded-xl p-6 shadow-sm border border-slate-200/60 flex flex-col h-[400px]">
-                        <h3 class="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <div class="bg-white rounded-xl p-4 md:p-5 shadow-sm border border-slate-200/60 flex flex-col h-[350px] md:h-[400px]">
+                        <h3 class="text-base font-bold text-slate-800 mb-3 md:mb-4 flex items-center gap-2">
                             <i class="fas fa-door-open text-indigo-500"></i>
                             Lưu lượng theo Lane
                         </h3>

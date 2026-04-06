@@ -1264,20 +1264,33 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
         },
         options: commonOptions
     });
-    
-    generateCustomLegend(gatePieChart, 'gate-pie-legend');
 
-    // Hour Pie Chart - Filtered from 08:00 to 17:00 (slots starting at 8 to 16)
-    const filteredHours = Object.keys(hourlyTotals)
-        .filter(h => {
-            const hourInt = parseInt(h.split(':')[0]);
-            return hourInt >= 8 && hourInt <= 16;
-        })
-        .sort();
+    // Hour Pie Chart - Grouped by hour (8h-15h), others grouped together
+    const groupedHourlyTotals = {};
+    let otherTotal = 0;
+
+    Object.keys(hourlyTotals).forEach(h => {
+        const hourInt = parseInt(h.split(':')[0]);
+        if (hourInt >= 8 && hourInt <= 15) {
+            const label = `${hourInt}h`;
+            groupedHourlyTotals[label] = (groupedHourlyTotals[label] || 0) + hourlyTotals[h];
+        } else {
+            otherTotal += hourlyTotals[h];
+        }
+    });
+
+    const hourLabelsShort = Object.keys(groupedHourlyTotals).sort((a, b) => parseInt(a) - parseInt(b));
+    const hourData = hourLabelsShort.map(label => groupedHourlyTotals[label]);
     
-    const hourLabelsShort = filteredHours.map(h => parseInt(h.split(':')[0]) + 'h');
-    const hourData = filteredHours.map(h => hourlyTotals[h]);
-    const hourColors = hourLabelsShort.map((label, idx) => getHourColor(label, idx));
+    if (otherTotal > 0) {
+        hourLabelsShort.push('Khác');
+        hourData.push(otherTotal);
+    }
+
+    const hourColors = hourLabelsShort.map((label, idx) => {
+        if (label === 'Khác') return '#94a3b8'; // slate-400 for 'Khác'
+        return getHourColor(label, idx);
+    });
     
     hourPieChart = new Chart(hourCtx, {
         type: 'doughnut',
@@ -1293,8 +1306,6 @@ function renderDashboardPieCharts(gateTotals, hourlyTotals) {
         },
         options: commonOptions
     });
-    
-    generateCustomLegend(hourPieChart, 'hour-pie-legend');
 }
 
 function generateCustomLegend(chartInstance, containerId) {
