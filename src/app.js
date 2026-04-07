@@ -2047,14 +2047,14 @@ document.querySelectorAll('input[name="taskforce"]').forEach(cb => {
 updateDownloadButtonVisibility();
 // --- CABLE CONFIG LOGIC ---
 const DEFAULT_CABLES = [
-    { id: '1', name: 'Tuyến 1', length: 1000, maxCabins: 50, maxSpeed: 5, maxCapacity: 2000 },
-    { id: '2', name: 'Tuyến 2', length: 1200, maxCabins: 60, maxSpeed: 5, maxCapacity: 2500 },
-    { id: '3', name: 'Tuyến 3', length: 1500, maxCabins: 70, maxSpeed: 6, maxCapacity: 3000 },
-    { id: '4', name: 'Tuyến 4', length: 1100, maxCabins: 55, maxSpeed: 5, maxCapacity: 2200 },
-    { id: '5', name: 'Tuyến 5', length: 1300, maxCabins: 65, maxSpeed: 6, maxCapacity: 2800 },
-    { id: '6', name: 'Tuyến 6', length: 1400, maxCabins: 68, maxSpeed: 6, maxCapacity: 2900 },
-    { id: '8', name: 'Tuyến 8', length: 1600, maxCabins: 75, maxSpeed: 7, maxCapacity: 3500 },
-    { id: '9', name: 'Tuyến 9', length: 1700, maxCabins: 80, maxSpeed: 7, maxCapacity: 4000 }
+    { id: '1', name: 'Tuyến 1', length: 1000, maxCabins: 50, maxSpeed: 5, maxCapacity: 2000, downtime: 0 },
+    { id: '2', name: 'Tuyến 2', length: 1200, maxCabins: 60, maxSpeed: 5, maxCapacity: 2500, downtime: 0 },
+    { id: '3', name: 'Tuyến 3', length: 1500, maxCabins: 70, maxSpeed: 6, maxCapacity: 3000, downtime: 0 },
+    { id: '4', name: 'Tuyến 4', length: 1100, maxCabins: 55, maxSpeed: 5, maxCapacity: 2200, downtime: 0 },
+    { id: '5', name: 'Tuyến 5', length: 1300, maxCabins: 65, maxSpeed: 6, maxCapacity: 2800, downtime: 0 },
+    { id: '6', name: 'Tuyến 6', length: 1400, maxCabins: 68, maxSpeed: 6, maxCapacity: 2900, downtime: 0 },
+    { id: '8', name: 'Tuyến 8', length: 1600, maxCabins: 75, maxSpeed: 7, maxCapacity: 3500, downtime: 0 },
+    { id: '9', name: 'Tuyến 9', length: 1700, maxCabins: 80, maxSpeed: 7, maxCapacity: 4000, downtime: 0 }
 ];
 
 function getCableConfigs() {
@@ -2070,35 +2070,73 @@ function saveCableConfigs(configs) {
     renderOEECableList(); // Update OEE list when config changes
 }
 
+function isCableConfigLocked() {
+    return localStorage.getItem('cableConfigLocked') === 'true';
+}
+
+function setCableConfigLocked(locked) {
+    localStorage.setItem('cableConfigLocked', locked);
+    renderCableConfigs();
+    updateCableConfigButtons();
+}
+
+function updateCableConfigButtons() {
+    const locked = isCableConfigLocked();
+    const btnSave = document.getElementById('btn-save-cable-config');
+    const btnEdit = document.getElementById('btn-edit-cable-config');
+    const btnAdd = document.getElementById('btn-add-cable');
+    
+    if (locked) {
+        btnSave?.classList.add('hidden');
+        btnEdit?.classList.remove('hidden');
+        btnAdd?.classList.add('hidden');
+    } else {
+        btnSave?.classList.remove('hidden');
+        btnEdit?.classList.add('hidden');
+        btnAdd?.classList.remove('hidden');
+    }
+}
+
 function renderCableConfigs() {
     const tbody = document.getElementById('cable-config-tbody');
     if (!tbody) return;
     const configs = getCableConfigs();
+    const locked = isCableConfigLocked();
+    
     tbody.innerHTML = '';
     configs.forEach((cable, index) => {
         const tr = document.createElement('tr');
         tr.className = 'border-b border-slate-100 hover:bg-slate-50 transition-colors';
+        
+        const disabledAttr = locked ? 'disabled class="w-full border-transparent bg-transparent rounded px-2 py-1 text-sm font-medium text-slate-700"' : 'class="w-full border border-slate-300 rounded px-2 py-1 text-sm font-medium"';
+        const disabledNumAttr = locked ? 'disabled class="w-full border-transparent bg-transparent rounded px-2 py-1 text-sm text-slate-700"' : 'class="w-full border border-slate-300 rounded px-2 py-1 text-sm"';
+        
         tr.innerHTML = `
-            <td class="py-3 font-medium text-slate-800"><input type="text" class="w-24 border border-slate-300 rounded px-2 py-1 text-sm font-medium" value="${cable.name}" onchange="updateCableConfig(${index}, 'name', this.value)"></td>
-            <td class="py-3"><input type="number" class="w-20 border border-slate-300 rounded px-2 py-1 text-sm" value="${cable.length}" onchange="updateCableConfig(${index}, 'length', this.value)"></td>
-            <td class="py-3"><input type="number" class="w-20 border border-slate-300 rounded px-2 py-1 text-sm" value="${cable.maxCabins}" onchange="updateCableConfig(${index}, 'maxCabins', this.value)"></td>
-            <td class="py-3"><input type="number" class="w-20 border border-slate-300 rounded px-2 py-1 text-sm" value="${cable.maxSpeed}" onchange="updateCableConfig(${index}, 'maxSpeed', this.value)"></td>
-            <td class="py-3"><input type="number" class="w-24 border border-slate-300 rounded px-2 py-1 text-sm" value="${cable.maxCapacity}" onchange="updateCableConfig(${index}, 'maxCapacity', this.value)"></td>
+            <td class="py-3 font-medium text-slate-800"><input type="text" ${disabledAttr} value="${cable.name}" onchange="updateCableConfig(${index}, 'name', this.value)"></td>
+            <td class="py-3"><input type="number" ${disabledNumAttr} value="${cable.length}" onchange="updateCableConfig(${index}, 'length', this.value)"></td>
+            <td class="py-3"><input type="number" ${disabledNumAttr} value="${cable.maxCabins}" onchange="updateCableConfig(${index}, 'maxCabins', this.value)"></td>
+            <td class="py-3"><input type="number" ${disabledNumAttr} value="${cable.maxSpeed}" onchange="updateCableConfig(${index}, 'maxSpeed', this.value)"></td>
+            <td class="py-3"><input type="number" ${disabledNumAttr} value="${cable.maxCapacity}" onchange="updateCableConfig(${index}, 'maxCapacity', this.value)"></td>
+            <td class="py-3"><input type="number" ${disabledNumAttr} value="${cable.downtime || 0}" onchange="updateCableConfig(${index}, 'downtime', this.value)"></td>
             <td class="py-3 text-right">
-                <button onclick="deleteCableConfig(${index})" class="text-rose-500 hover:text-rose-700 p-1"><i class="fas fa-trash"></i></button>
+                ${locked ? '' : `<button onclick="deleteCableConfig(${index})" class="text-rose-500 hover:text-rose-700 p-1"><i class="fas fa-trash"></i></button>`}
             </td>
         `;
         tbody.appendChild(tr);
     });
+    
+    updateCableConfigButtons();
 }
 
 window.updateCableConfig = function(index, field, value) {
+    if (isCableConfigLocked()) return;
     const configs = getCableConfigs();
     configs[index][field] = field === 'name' ? value : Number(value);
     saveCableConfigs(configs);
 };
 
 window.deleteCableConfig = function(index) {
+    if (isCableConfigLocked()) return;
     if (confirm('Bạn có chắc chắn muốn xóa tuyến cáp này?')) {
         const configs = getCableConfigs();
         configs.splice(index, 1);
@@ -2107,6 +2145,7 @@ window.deleteCableConfig = function(index) {
 };
 
 document.getElementById('btn-add-cable')?.addEventListener('click', () => {
+    if (isCableConfigLocked()) return;
     const configs = getCableConfigs();
     const newId = Date.now().toString();
     configs.push({
@@ -2115,9 +2154,18 @@ document.getElementById('btn-add-cable')?.addEventListener('click', () => {
         length: 1000,
         maxCabins: 50,
         maxSpeed: 5,
-        maxCapacity: 2000
+        maxCapacity: 2000,
+        downtime: 0
     });
     saveCableConfigs(configs);
+});
+
+document.getElementById('btn-save-cable-config')?.addEventListener('click', () => {
+    setCableConfigLocked('true');
+});
+
+document.getElementById('btn-edit-cable-config')?.addEventListener('click', () => {
+    setCableConfigLocked('false');
 });
 
 // --- OEE LOGIC ---
