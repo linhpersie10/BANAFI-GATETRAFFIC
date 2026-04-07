@@ -1401,15 +1401,54 @@ function renderDashboardChart(allHoursSet) {
         });
     });
 
+    const totalLabelsPlugin = {
+        id: 'totalLabels',
+        afterDatasetsDraw(chart, args, pluginOptions) {
+            const { ctx, data, scales: { x, y } } = chart;
+            ctx.save();
+            ctx.font = 'bold 11px Inter, sans-serif';
+            ctx.fillStyle = '#64748b'; // slate-500
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+
+            const totals = [];
+            
+            for (let i = 0; i < data.labels.length; i++) {
+                let sum = 0;
+                data.datasets.forEach((dataset, datasetIndex) => {
+                    if (chart.isDatasetVisible(datasetIndex)) {
+                        sum += dataset.data[i] || 0;
+                    }
+                });
+                totals.push(sum);
+            }
+
+            for (let i = 0; i < data.labels.length; i++) {
+                if (totals[i] > 0) {
+                    let topY = y.getPixelForValue(totals[i]);
+                    let xPos = x.getPixelForValue(i);
+                    ctx.fillText(totals[i].toLocaleString('vi-VN'), xPos, topY - 4);
+                }
+            }
+            ctx.restore();
+        }
+    };
+
     dashboardChart = new Chart(ctx, {
         type: 'bar',
         data: {
             labels: hourlyLabels,
             datasets: datasets
         },
+        plugins: [totalLabelsPlugin],
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            layout: {
+                padding: {
+                    top: 20
+                }
+            },
             plugins: {
                 legend: {
                     position: 'bottom',
