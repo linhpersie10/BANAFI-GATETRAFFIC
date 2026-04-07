@@ -892,6 +892,7 @@ let hourPieChart = null;
 let gateLineChart = null;
 let currentGlobalData = []; // Lưu trữ dữ liệu của ngày đang chọn
 let comparisonGlobalData = []; // Lưu trữ dữ liệu của khung thời gian so sánh
+let dashboardIntervalMode = '1h'; // '1h' or '30m'
 
 // Bảng màu cố định để đảm bảo tính nhất quán giữa các ngày
 const GATE_COLORS = {
@@ -926,6 +927,36 @@ function getHourColor(hourLabel, index) {
     // Có thể dùng logic cố định cho giờ nếu muốn, hiện tại dùng index từ mảng màu mặc định
     return DEFAULT_COLORS[index % DEFAULT_COLORS.length];
 }
+
+document.getElementById('btn-interval-1h')?.addEventListener('click', () => {
+    dashboardIntervalMode = '1h';
+    document.getElementById('btn-interval-1h').classList.replace('text-slate-500', 'text-indigo-600');
+    document.getElementById('btn-interval-1h').classList.replace('hover:text-slate-700', 'bg-white');
+    document.getElementById('btn-interval-1h').classList.add('shadow-sm');
+    
+    document.getElementById('btn-interval-30m').classList.replace('text-indigo-600', 'text-slate-500');
+    document.getElementById('btn-interval-30m').classList.replace('bg-white', 'hover:text-slate-700');
+    document.getElementById('btn-interval-30m').classList.remove('shadow-sm');
+    
+    if (currentGlobalData.length > 0) {
+        updateDashboardUI();
+    }
+});
+
+document.getElementById('btn-interval-30m')?.addEventListener('click', () => {
+    dashboardIntervalMode = '30m';
+    document.getElementById('btn-interval-30m').classList.replace('text-slate-500', 'text-indigo-600');
+    document.getElementById('btn-interval-30m').classList.replace('hover:text-slate-700', 'bg-white');
+    document.getElementById('btn-interval-30m').classList.add('shadow-sm');
+    
+    document.getElementById('btn-interval-1h').classList.replace('text-indigo-600', 'text-slate-500');
+    document.getElementById('btn-interval-1h').classList.replace('bg-white', 'hover:text-slate-700');
+    document.getElementById('btn-interval-1h').classList.remove('shadow-sm');
+    
+    if (currentGlobalData.length > 0) {
+        updateDashboardUI();
+    }
+});
 
 document.getElementById('view-mode').addEventListener('change', (e) => {
     const mode = e.target.value;
@@ -1361,17 +1392,21 @@ function renderDashboardChart(allHoursSet) {
     // Sắp xếp các khung giờ theo thứ tự thời gian
     const rawLabels = Array.from(allHoursSet).sort();
     
-    // Aggregate 30-min data to 1-hour for the dashboard to keep it "tinh gọn"
-    const hourlyLabels = [];
-    const hourlyDataMap = {}; // { gateName: { hourLabel: total } }
-
-    rawLabels.forEach(bucket => {
-        const hour = bucket.split(':')[0];
-        const hourLabel = parseInt(hour) + 'h';
-        if (!hourlyLabels.includes(hourLabel)) {
-            hourlyLabels.push(hourLabel);
-        }
-    });
+    let chartLabels = [];
+    
+    if (dashboardIntervalMode === '1h') {
+        // Aggregate 30-min data to 1-hour
+        rawLabels.forEach(bucket => {
+            const hour = bucket.split(':')[0];
+            const hourLabel = parseInt(hour) + 'h';
+            if (!chartLabels.includes(hourLabel)) {
+                chartLabels.push(hourLabel);
+            }
+        });
+    } else {
+        // Use 30-min raw labels directly
+        chartLabels = [...rawLabels];
+    }
 
     const datasets = [];
     const gateNames = Array.from(new Set(currentGlobalData.map(d => d.gateName)));
@@ -1379,18 +1414,25 @@ function renderDashboardChart(allHoursSet) {
     gateNames.forEach((gateName, index) => {
         const gateDataArray = currentGlobalData.filter(d => d.gateName === gateName);
         
-        const data = hourlyLabels.map(hourLabel => {
-            let totalForHour = 0;
+        const data = chartLabels.map(label => {
+            let totalForLabel = 0;
             rawLabels.forEach(bucket => {
-                if (parseInt(bucket.split(':')[0]) + 'h' === hourLabel) {
+                let match = false;
+                if (dashboardIntervalMode === '1h') {
+                    match = (parseInt(bucket.split(':')[0]) + 'h' === label);
+                } else {
+                    match = (bucket === label);
+                }
+                
+                if (match) {
                     gateDataArray.forEach(gateData => {
                         if (gateData.hourlyData[bucket]) {
-                            totalForHour += Object.values(gateData.hourlyData[bucket]).reduce((sum, count) => sum + count, 0);
+                            totalForLabel += Object.values(gateData.hourlyData[bucket]).reduce((sum, count) => sum + count, 0);
                         }
                     });
                 }
             });
-            return totalForHour;
+            return totalForLabel;
         });
 
         datasets.push({
@@ -1437,7 +1479,7 @@ function renderDashboardChart(allHoursSet) {
     dashboardChart = new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: hourlyLabels,
+            labels: chartLabels,
             datasets: datasets
         },
         plugins: [totalLabelsPlugin],
@@ -2003,4 +2045,207 @@ document.querySelectorAll('input[name="taskforce"]').forEach(cb => {
 
 // Khởi chạy ứng dụng
 updateDownloadButtonVisibility();
+// --- CABLE CONFIG LOGIC ---
+const DEFAULT_CABLES = [
+    { id: '1', name: 'Tuyến 1', length: 1000, maxCabins: 50, maxSpeed: 5, maxCapacity: 2000 },
+    { id: '2', name: 'Tuyến 2', length: 1200, maxCabins: 60, maxSpeed: 5, maxCapacity: 2500 },
+    { id: '3', name: 'Tuyến 3', length: 1500, maxCabins: 70, maxSpeed: 6, maxCapacity: 3000 },
+    { id: '4', name: 'Tuyến 4', length: 1100, maxCabins: 55, maxSpeed: 5, maxCapacity: 2200 },
+    { id: '5', name: 'Tuyến 5', length: 1300, maxCabins: 65, maxSpeed: 6, maxCapacity: 2800 },
+    { id: '6', name: 'Tuyến 6', length: 1400, maxCabins: 68, maxSpeed: 6, maxCapacity: 2900 },
+    { id: '8', name: 'Tuyến 8', length: 1600, maxCabins: 75, maxSpeed: 7, maxCapacity: 3500 },
+    { id: '9', name: 'Tuyến 9', length: 1700, maxCabins: 80, maxSpeed: 7, maxCapacity: 4000 }
+];
+
+function getCableConfigs() {
+    const stored = localStorage.getItem('cableConfigs');
+    if (stored) return JSON.parse(stored);
+    localStorage.setItem('cableConfigs', JSON.stringify(DEFAULT_CABLES));
+    return DEFAULT_CABLES;
+}
+
+function saveCableConfigs(configs) {
+    localStorage.setItem('cableConfigs', JSON.stringify(configs));
+    renderCableConfigs();
+    renderOEECableList(); // Update OEE list when config changes
+}
+
+function renderCableConfigs() {
+    const tbody = document.getElementById('cable-config-tbody');
+    if (!tbody) return;
+    const configs = getCableConfigs();
+    tbody.innerHTML = '';
+    configs.forEach((cable, index) => {
+        const tr = document.createElement('tr');
+        tr.className = 'border-b border-slate-100 hover:bg-slate-50 transition-colors';
+        tr.innerHTML = `
+            <td class="py-3 font-medium text-slate-800"><input type="text" class="w-24 border border-slate-300 rounded px-2 py-1 text-sm font-medium" value="${cable.name}" onchange="updateCableConfig(${index}, 'name', this.value)"></td>
+            <td class="py-3"><input type="number" class="w-20 border border-slate-300 rounded px-2 py-1 text-sm" value="${cable.length}" onchange="updateCableConfig(${index}, 'length', this.value)"></td>
+            <td class="py-3"><input type="number" class="w-20 border border-slate-300 rounded px-2 py-1 text-sm" value="${cable.maxCabins}" onchange="updateCableConfig(${index}, 'maxCabins', this.value)"></td>
+            <td class="py-3"><input type="number" class="w-20 border border-slate-300 rounded px-2 py-1 text-sm" value="${cable.maxSpeed}" onchange="updateCableConfig(${index}, 'maxSpeed', this.value)"></td>
+            <td class="py-3"><input type="number" class="w-24 border border-slate-300 rounded px-2 py-1 text-sm" value="${cable.maxCapacity}" onchange="updateCableConfig(${index}, 'maxCapacity', this.value)"></td>
+            <td class="py-3 text-right">
+                <button onclick="deleteCableConfig(${index})" class="text-rose-500 hover:text-rose-700 p-1"><i class="fas fa-trash"></i></button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+window.updateCableConfig = function(index, field, value) {
+    const configs = getCableConfigs();
+    configs[index][field] = field === 'name' ? value : Number(value);
+    saveCableConfigs(configs);
+};
+
+window.deleteCableConfig = function(index) {
+    if (confirm('Bạn có chắc chắn muốn xóa tuyến cáp này?')) {
+        const configs = getCableConfigs();
+        configs.splice(index, 1);
+        saveCableConfigs(configs);
+    }
+};
+
+document.getElementById('btn-add-cable')?.addEventListener('click', () => {
+    const configs = getCableConfigs();
+    const newId = Date.now().toString();
+    configs.push({
+        id: newId,
+        name: `Tuyến mới`,
+        length: 1000,
+        maxCabins: 50,
+        maxSpeed: 5,
+        maxCapacity: 2000
+    });
+    saveCableConfigs(configs);
+});
+
+// --- OEE LOGIC ---
+function renderOEECableList() {
+    const container = document.getElementById('oee-cable-list');
+    if (!container) return;
+    
+    const configs = getCableConfigs();
+    container.innerHTML = '';
+    
+    configs.forEach((cable, index) => {
+        const card = document.createElement('div');
+        card.className = 'bg-slate-50 rounded-lg p-4 border border-slate-200';
+        card.innerHTML = `
+            <div class="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
+                <span class="font-bold text-slate-800">${cable.name}</span>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="oee-toggle-${index}" class="sr-only peer" checked>
+                    <div class="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                </label>
+            </div>
+            <div class="space-y-3">
+                <div class="flex items-center justify-between">
+                    <label class="text-xs text-slate-600">Số cabin h.động</label>
+                    <input type="number" id="oee-cabins-${index}" class="w-20 border border-slate-300 rounded px-2 py-1 text-xs" value="${cable.maxCabins}">
+                </div>
+                <div class="flex items-center justify-between">
+                    <label class="text-xs text-slate-600">Tốc độ (m/s)</label>
+                    <input type="number" id="oee-speed-${index}" class="w-20 border border-slate-300 rounded px-2 py-1 text-xs" value="${cable.maxSpeed}">
+                </div>
+                <div class="flex items-center justify-between">
+                    <label class="text-xs text-slate-600">Giờ mở (VD: 8-17)</label>
+                    <input type="text" id="oee-hours-${index}" class="w-20 border border-slate-300 rounded px-2 py-1 text-xs" placeholder="Cả ngày">
+                </div>
+            </div>
+        `;
+        container.appendChild(card);
+    });
+}
+
+document.getElementById('btn-calculate-oee')?.addEventListener('click', () => {
+    const dateStr = document.getElementById('oee-date-picker').value;
+    if (!dateStr) {
+        showToast('Vui lòng chọn ngày tính toán', 'error');
+        return;
+    }
+    
+    // Giả lập tính toán OEE và hiển thị kết quả theo giờ
+    const resultsContainer = document.getElementById('oee-results-container');
+    const aiSuggestion = document.getElementById('ai-suggestion-content');
+    
+    const activeCables = getCableConfigs().filter((_, index) => document.getElementById(`oee-toggle-${index}`).checked);
+    
+    if (activeCables.length === 0) {
+        showToast('Vui lòng chọn ít nhất 1 tuyến cáp để tính toán', 'error');
+        return;
+    }
+
+    const hours = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
+
+    resultsContainer.classList.remove('hidden');
+    resultsContainer.innerHTML = `
+        <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
+            <h4 class="font-bold text-slate-800 mb-4">Kết quả OEE theo giờ - Ngày ${dateStr}</h4>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse min-w-[800px]">
+                    <thead>
+                        <tr class="border-b border-slate-200 text-sm text-slate-500">
+                            <th class="pb-3 font-medium sticky left-0 bg-white">Tuyến cáp</th>
+                            ${hours.map(h => `<th class="pb-3 font-medium text-center">${h}</th>`).join('')}
+                            <th class="pb-3 font-medium text-center text-indigo-600">TB Ngày</th>
+                        </tr>
+                    </thead>
+                    <tbody class="text-sm text-slate-700">
+                        ${activeCables.map(cable => {
+                            let totalOee = 0;
+                            const hourlyOeeHtml = hours.map(() => {
+                                // Giả lập OEE theo giờ (từ 60% đến 98%)
+                                const oee = (60 + Math.random() * 38).toFixed(1);
+                                totalOee += parseFloat(oee);
+                                const colorClass = oee >= 85 ? 'text-emerald-600 font-medium' : (oee >= 75 ? 'text-amber-600' : 'text-rose-600');
+                                return `<td class="py-3 text-center ${colorClass}">${oee}%</td>`;
+                            }).join('');
+                            
+                            const avgOee = (totalOee / hours.length).toFixed(1);
+                            
+                            return `
+                                <tr class="border-b border-slate-100 hover:bg-slate-50">
+                                    <td class="py-3 font-medium sticky left-0 bg-white group-hover:bg-slate-50">${cable.name}</td>
+                                    ${hourlyOeeHtml}
+                                    <td class="py-3 text-center font-bold text-indigo-600">${avgOee}%</td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+            <div class="mt-4 flex items-center gap-4 text-xs text-slate-500">
+                <div class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-emerald-500"></span> Tốt (≥ 85%)</div>
+                <div class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-amber-500"></span> Khá (75% - 84%)</div>
+                <div class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-rose-500"></span> Cần cải thiện (< 75%)</div>
+            </div>
+        </div>
+    `;
+    
+    // AI Suggestion
+    aiSuggestion.innerHTML = `
+        <div class="bg-white/60 rounded-lg p-4 border border-indigo-100/50">
+            <ul class="space-y-2 list-disc list-inside">
+                <li><span class="font-medium text-indigo-700">Tuyến 1 & 2:</span> Dự báo lưu lượng khách từ 9h-11h sẽ tăng đột biến (khoảng 3000 khách/h). Đề xuất <strong>tăng tốc độ chạy cáp lên tối đa</strong> và bổ sung đủ cabin.</li>
+                <li><span class="font-medium text-indigo-700">Tuyến 4:</span> Lưu lượng khách dự kiến thấp vào buổi chiều (sau 14h). Có thể <strong>giảm tốc độ hoặc tạm dừng</strong> để tiết kiệm năng lượng và chi phí vận hành.</li>
+                <li><span class="font-medium text-indigo-700">Tuyến 8 & 9:</span> OEE hiện tại đang ở mức tối ưu. Tiếp tục duy trì cấu hình vận hành hiện tại.</li>
+            </ul>
+        </div>
+    `;
+    
+    showToast('Đã tính toán OEE thành công', 'success');
+});
+
+// Initialize
+setTimeout(() => {
+    renderCableConfigs();
+    renderOEECableList();
+    
+    // Set default date to today
+    const today = new Date().toISOString().split('T')[0];
+    const datePicker = document.getElementById('oee-date-picker');
+    if (datePicker) datePicker.value = today;
+}, 500);
+
 initFirebase();

@@ -85,6 +85,14 @@
                     <i class="fas fa-database w-5 text-center"></i>
                     <span>Quản lý Dữ liệu</span>
                 </button>
+                <button onclick="switchTab('cable-config')" id="nav-cable-config" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-white transition-all text-left font-medium">
+                    <i class="fas fa-cogs w-5 text-center"></i>
+                    <span>Cấu hình Tuyến Cáp</span>
+                </button>
+                <button onclick="switchTab('cable-oee')" id="nav-cable-oee" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-white transition-all text-left font-medium">
+                    <i class="fas fa-chart-line w-5 text-center"></i>
+                    <span>Tính OEE Tuyến Cáp</span>
+                </button>
             </nav>
         </div>
 
@@ -229,7 +237,13 @@
                 <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6">
                     <!-- Left Column: Bar Chart (Priority) -->
                     <div class="lg:col-span-8 xl:col-span-9 bg-white rounded-xl p-4 md:p-5 shadow-sm border border-slate-200/60 flex flex-col h-[400px] md:h-[450px]">
-                        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Lưu lượng khách theo khung giờ</h3>
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest">Lưu lượng khách theo khung giờ</h3>
+                            <div class="flex bg-slate-100 p-1 rounded-lg">
+                                <button id="btn-interval-1h" class="px-3 py-1 text-xs font-medium rounded-md bg-white shadow-sm text-indigo-600 transition-all">1 Giờ</button>
+                                <button id="btn-interval-30m" class="px-3 py-1 text-xs font-medium rounded-md text-slate-500 hover:text-slate-700 transition-all">30 Phút</button>
+                            </div>
+                        </div>
                         <div class="flex-1 w-full relative">
                             <canvas id="dashboard-chart"></canvas>
                         </div>
@@ -450,6 +464,82 @@
                 </div>
             </div>
 
+            <!-- Cấu hình Tuyến Cáp Tab -->
+            <div id="tab-cable-config" class="tab-content hidden max-w-5xl mx-auto">
+                <div class="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+                    <div class="p-6 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                        <div>
+                            <h3 class="text-lg font-bold text-slate-800">Cấu hình Tuyến Cáp</h3>
+                            <p class="text-sm text-slate-500 mt-1">Thiết lập thông số kỹ thuật cho các tuyến cáp treo.</p>
+                        </div>
+                        <button id="btn-add-cable" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors flex items-center gap-2">
+                            <i class="fas fa-plus"></i> Thêm tuyến cáp
+                        </button>
+                    </div>
+                    <div class="p-6 overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="border-b border-slate-200 text-sm text-slate-500">
+                                    <th class="pb-3 font-medium">Tuyến cáp</th>
+                                    <th class="pb-3 font-medium">Chiều dài (m)</th>
+                                    <th class="pb-3 font-medium">Số cabin tối đa</th>
+                                    <th class="pb-3 font-medium">Tốc độ tối đa (m/s)</th>
+                                    <th class="pb-3 font-medium">Tổng tải tối đa (khách/h)</th>
+                                    <th class="pb-3 font-medium text-right">Thao tác</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cable-config-tbody" class="text-sm text-slate-700">
+                                <!-- Rendered by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tính OEE Tuyến Cáp Tab -->
+            <div id="tab-cable-oee" class="tab-content hidden max-w-6xl mx-auto space-y-6">
+                <!-- Control Panel -->
+                <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
+                    <div class="flex flex-col md:flex-row gap-6 items-start md:items-center justify-between mb-6">
+                        <div>
+                            <h3 class="text-lg font-bold text-slate-800">Tính toán OEE Tuyến Cáp</h3>
+                            <p class="text-sm text-slate-500 mt-1">Đánh giá hiệu suất tổng thể thiết bị dựa trên lưu lượng khách.</p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <input type="date" id="oee-date-picker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+                            <button id="btn-calculate-oee" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors">
+                                Tính toán
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div id="oee-cable-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <!-- Rendered by JS -->
+                    </div>
+                </div>
+
+                <!-- AI Suggestion Panel -->
+                <div class="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl shadow-sm border border-indigo-100 p-6">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600">
+                            <i class="fas fa-robot text-xl"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-base font-bold text-slate-800">AI Gợi ý Vận hành</h3>
+                            <p class="text-xs text-slate-500">Dựa trên dự báo lưu lượng khách và xu hướng</p>
+                        </div>
+                    </div>
+                    <div id="ai-suggestion-content" class="text-sm text-slate-700 space-y-3">
+                        <p class="italic text-slate-500">Vui lòng chọn ngày và tính toán OEE để xem gợi ý từ AI.</p>
+                    </div>
+                </div>
+
+                <!-- OEE Results -->
+                <div id="oee-results-container" class="hidden space-y-6">
+                    <!-- Charts and tables will be injected here -->
+                </div>
+            </div>
+
         </div>
     </main>
 
@@ -470,6 +560,14 @@
         <button onclick="switchTab('data-entry')" id="nav-mobile-data-entry" class="flex-1 flex flex-col items-center gap-1 py-3 text-slate-400 hover:text-slate-600 transition-colors">
             <i class="fas fa-database text-lg"></i>
             <span class="text-[10px] font-medium">Dữ liệu</span>
+        </button>
+        <button onclick="switchTab('cable-config')" id="nav-mobile-cable-config" class="flex-1 flex flex-col items-center gap-1 py-3 text-slate-400 hover:text-slate-600 transition-colors">
+            <i class="fas fa-cogs text-lg"></i>
+            <span class="text-[10px] font-medium">Cáp treo</span>
+        </button>
+        <button onclick="switchTab('cable-oee')" id="nav-mobile-cable-oee" class="flex-1 flex flex-col items-center gap-1 py-3 text-slate-400 hover:text-slate-600 transition-colors">
+            <i class="fas fa-chart-line text-lg"></i>
+            <span class="text-[10px] font-medium">OEE</span>
         </button>
     </nav>
 
