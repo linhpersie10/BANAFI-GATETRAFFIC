@@ -3,6 +3,7 @@ import * as XLSX from 'https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs';
 import Chart from 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/auto/+esm';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js';
 import { getFirestore, collection, query, where, getDocs, writeBatch, doc, deleteDoc, orderBy, limit } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js';
+import { GoogleGenAI } from "@google/genai";
 import config from '../firebase-applet-config.json';
 
 // --- FIREBASE INITIALIZATION ---
@@ -654,6 +655,16 @@ async function aggregateAndUpload(rawData, targetDate) {
     rawData.forEach(row => {
         // Đảm bảo dòng có đủ cột
         if (row.length < 14) return;
+
+        // --- FILTERING LOGIC ---
+        // 1. Xóa bỏ hết tất cả các dòng dữ liệu có giá trị là "Re-entry" ở cột B (index 1)
+        const status = row[1] ? row[1].toString().trim() : '';
+        if (status === 'Re-entry') return;
+
+        // 2. Xóa bỏ tất cả các dòng dữ liệu không chứa cụm từ "Cable Car" ở cột G (index 6)
+        const category = row[6] ? row[6].toString() : '';
+        if (!category.includes('Cable Car')) return;
+        // -----------------------
 
         // Xử lý dữ liệu ngày tháng từ Excel (có thể là số serial)
         let rawTime = row[0]; // UsageDateTime
@@ -2126,6 +2137,7 @@ window.editCableRow = function(index) {
 window.saveCableRow = function(index) {
     editingCableIndices.delete(index);
     renderCableConfigs();
+    showNotification('Thành công', 'Đã lưu cấu hình tuyến cáp', 'success');
 };
 
 window.deleteCableConfig = function(index) {
@@ -2201,84 +2213,206 @@ function renderOEECableList() {
     });
 }
 
-document.getElementById('btn-calculate-oee')?.addEventListener('click', () => {
+document.getElementById('btn-calculate-oee')?.addEventListener('click', async () => {
     const dateStr = document.getElementById('oee-date-picker').value;
     if (!dateStr) {
-        showToast('Vui lòng chọn ngày tính toán', 'error');
+        showNotification('Lỗi', 'Vui lòng chọn ngày tính toán', 'error');
         return;
     }
     
-    // Giả lập tính toán OEE và hiển thị kết quả theo giờ
-    const resultsContainer = document.getElementById('oee-results-container');
-    const aiSuggestion = document.getElementById('ai-suggestion-content');
-    
-    const activeCables = getCableConfigs().filter((_, index) => document.getElementById(`oee-toggle-${index}`).checked);
-    
-    if (activeCables.length === 0) {
-        showToast('Vui lòng chọn ít nhất 1 tuyến cáp để tính toán', 'error');
-        return;
+    if (!db) return;
+    showLoading(true, 'Đang tính toán OEE...');
+
+    try {
+        // 1. Tải dữ liệu thực tế từ Firestore
+        const q = query(collection(db, 'gate_statistics'), where('date', '==', dateStr));
+        const snapshot = await getDocs(q);
+        const actualData = {};
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            actualData[data.gateName] = data;
+        });
+
+        // 2. Lấy cấu hình tuyến cáp
+        const configs = getCableConfigs();
+        const activeCables = configs.filter((_, index) => document.getElementById(`oee-toggle-${index}`).checked);
+        
+        if (activeCables.length === 0) {
+            showNotification('Lỗi', 'Vui lòng chọn ít nhất 1 tuyến cáp để tính toán', 'error');
+            showLoading(false);
+            return;
+        }
+
+        const resultsContainer = document.getElementById('oee-results-container');
+        
+        // Giả lập khung giờ từ 8h đến 17h (hoặc lấy từ dữ liệu thực tế)
+        const hours = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
+
+        let oeeSummary = [];
+
+        let tableHtml = `
+            <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
+                <h4 class="font-bold text-slate-800 mb-4">Kết quả OEE theo giờ - Ngày ${dateStr}</h4>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse min-w-[800px]">
+                        <thead>
+                            <tr class="border-b border-slate-200 text-sm text-slate-500">
+                                <th class="pb-3 font-medium sticky left-0 bg-white">Tuyến cáp</th>
+                                ${hours.map(h => `<th class="pb-3 font-medium text-center">${h}</th>`).join('')}
+                                <th class="pb-3 font-medium text-center text-indigo-600">TB Ngày</th>
+                            </tr>
+                        </thead>
+                        <tbody class="text-sm text-slate-700">
+        `;
+
+        activeCables.forEach((cable, configIndex) => {
+            const gateName = cable.name;
+            const gateData = actualData[gateName];
+            
+            // Lấy giờ hoạt động từ input (VD: 8-17)
+            const hoursInput = document.getElementById(`oee-hours-${configIndex}`).value;
+            let startH = 8, endH = 17;
+            if (hoursInput && hoursInput.includes('-')) {
+                const parts = hoursInput.split('-');
+                startH = parseInt(parts[0]) || 8;
+                endH = parseInt(parts[1]) || 17;
+            }
+
+            let totalOee = 0;
+            let validHoursCount = 0;
+            const hourlyOeeValues = [];
+
+            const hourlyHtml = hours.map(h => {
+                const hourInt = parseInt(h.split(':')[0]);
+                
+                // Nếu ngoài giờ hoạt động thì N/A
+                if (hourInt < startH || hourInt >= endH) {
+                    return `<td class="py-3 text-center text-slate-300">N/A</td>`;
+                }
+
+                // Tính OEE cho giờ này
+                // OEE = (Thực tế) / (Công suất tối đa trong 1 giờ)
+                // Công suất tối đa = cable.maxCapacity
+                
+                let actualInHour = 0;
+                if (gateData && gateData.hourlyData) {
+                    // Gom nhóm 30p thành 1h
+                    const bucket1 = `${hourInt.toString().padStart(2, '0')}:00 - ${hourInt.toString().padStart(2, '0')}:30`;
+                    const bucket2 = `${hourInt.toString().padStart(2, '0')}:30 - ${(hourInt + 1).toString().padStart(2, '0')}:00`;
+                    
+                    if (gateData.hourlyData[bucket1]) {
+                        actualInHour += Object.values(gateData.hourlyData[bucket1]).reduce((s, c) => s + c, 0);
+                    }
+                    if (gateData.hourlyData[bucket2]) {
+                        actualInHour += Object.values(gateData.hourlyData[bucket2]).reduce((s, c) => s + c, 0);
+                    }
+                }
+
+                // Hiệu chỉnh công suất dựa trên số cabin và tốc độ đang chạy
+                const actualCabins = parseInt(document.getElementById(`oee-cabins-${configIndex}`).value) || cable.maxCabins;
+                const actualSpeed = parseFloat(document.getElementById(`oee-speed-${configIndex}`).value) || cable.maxSpeed;
+                
+                // Tỷ lệ công suất = (cabin_thực / cabin_max) * (tốc_độ_thực / tốc_độ_max)
+                const capacityRatio = (actualCabins / cable.maxCabins) * (actualSpeed / cable.maxSpeed);
+                
+                // Trừ downtime định mức (phút) khỏi 60 phút của 1 giờ
+                const scheduledDowntimeInHour = (cable.downtime || 0) / (endH - startH); // Phân bổ downtime đều cho các giờ hoạt động
+                const effectiveMinutesInHour = Math.max(0, 60 - scheduledDowntimeInHour);
+                
+                const currentMaxCapacity = (cable.maxCapacity * capacityRatio) * (effectiveMinutesInHour / 60);
+
+                let oee = 0;
+                if (currentMaxCapacity > 0) {
+                    oee = (actualInHour / currentMaxCapacity) * 100;
+                }
+                if (oee > 100) oee = 100; // Cap at 100%
+
+                totalOee += oee;
+                validHoursCount++;
+                hourlyOeeValues.push(oee.toFixed(1));
+
+                const colorClass = oee >= 85 ? 'text-emerald-600 font-medium' : (oee >= 75 ? 'text-amber-600' : 'text-rose-600');
+                return `<td class="py-3 text-center ${colorClass}">${oee.toFixed(1)}%</td>`;
+            }).join('');
+
+            const avgOee = validHoursCount > 0 ? (totalOee / validHoursCount).toFixed(1) : '0.0';
+            oeeSummary.push({ name: gateName, avgOee, hourly: hourlyOeeValues });
+
+            tableHtml += `
+                <tr class="border-b border-slate-100 hover:bg-slate-50">
+                    <td class="py-3 font-medium sticky left-0 bg-white group-hover:bg-slate-50">${gateName}</td>
+                    ${hourlyHtml}
+                    <td class="py-3 text-center font-bold text-indigo-600">${avgOee}%</td>
+                </tr>
+            `;
+        });
+
+        tableHtml += `
+                        </tbody>
+                    </table>
+                </div>
+                <div class="mt-4 flex items-center gap-4 text-xs text-slate-500">
+                    <div class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-emerald-500"></span> Tốt (≥ 85%)</div>
+                    <div class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-amber-500"></span> Khá (75% - 84%)</div>
+                    <div class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-rose-500"></span> Cần cải thiện (< 75%)</div>
+                </div>
+            </div>
+        `;
+
+        resultsContainer.innerHTML = tableHtml;
+        resultsContainer.classList.remove('hidden');
+
+        // 3. Gọi AI Suggestion
+        await generateAISuggestions(oeeSummary, dateStr);
+
+        showNotification('Thành công', 'Đã tính toán OEE dựa trên dữ liệu thực tế', 'success');
+    } catch (error) {
+        console.error("Lỗi tính toán OEE:", error);
+        showNotification('Lỗi', 'Không thể tính toán OEE. Vui lòng kiểm tra dữ liệu.', 'error');
+    } finally {
+        showLoading(false);
     }
-
-    const hours = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
-
-    resultsContainer.classList.remove('hidden');
-    resultsContainer.innerHTML = `
-        <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
-            <h4 class="font-bold text-slate-800 mb-4">Kết quả OEE theo giờ - Ngày ${dateStr}</h4>
-            <div class="overflow-x-auto">
-                <table class="w-full text-left border-collapse min-w-[800px]">
-                    <thead>
-                        <tr class="border-b border-slate-200 text-sm text-slate-500">
-                            <th class="pb-3 font-medium sticky left-0 bg-white">Tuyến cáp</th>
-                            ${hours.map(h => `<th class="pb-3 font-medium text-center">${h}</th>`).join('')}
-                            <th class="pb-3 font-medium text-center text-indigo-600">TB Ngày</th>
-                        </tr>
-                    </thead>
-                    <tbody class="text-sm text-slate-700">
-                        ${activeCables.map(cable => {
-                            let totalOee = 0;
-                            const hourlyOeeHtml = hours.map(() => {
-                                // Giả lập OEE theo giờ (từ 60% đến 98%)
-                                const oee = (60 + Math.random() * 38).toFixed(1);
-                                totalOee += parseFloat(oee);
-                                const colorClass = oee >= 85 ? 'text-emerald-600 font-medium' : (oee >= 75 ? 'text-amber-600' : 'text-rose-600');
-                                return `<td class="py-3 text-center ${colorClass}">${oee}%</td>`;
-                            }).join('');
-                            
-                            const avgOee = (totalOee / hours.length).toFixed(1);
-                            
-                            return `
-                                <tr class="border-b border-slate-100 hover:bg-slate-50">
-                                    <td class="py-3 font-medium sticky left-0 bg-white group-hover:bg-slate-50">${cable.name}</td>
-                                    ${hourlyOeeHtml}
-                                    <td class="py-3 text-center font-bold text-indigo-600">${avgOee}%</td>
-                                </tr>
-                            `;
-                        }).join('')}
-                    </tbody>
-                </table>
-            </div>
-            <div class="mt-4 flex items-center gap-4 text-xs text-slate-500">
-                <div class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-emerald-500"></span> Tốt (≥ 85%)</div>
-                <div class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-amber-500"></span> Khá (75% - 84%)</div>
-                <div class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-rose-500"></span> Cần cải thiện (< 75%)</div>
-            </div>
-        </div>
-    `;
-    
-    // AI Suggestion
-    aiSuggestion.innerHTML = `
-        <div class="bg-white/60 rounded-lg p-4 border border-indigo-100/50">
-            <ul class="space-y-2 list-disc list-inside">
-                <li><span class="font-medium text-indigo-700">Tuyến 1 & 2:</span> Dự báo lưu lượng khách từ 9h-11h sẽ tăng đột biến (khoảng 3000 khách/h). Đề xuất <strong>tăng tốc độ chạy cáp lên tối đa</strong> và bổ sung đủ cabin.</li>
-                <li><span class="font-medium text-indigo-700">Tuyến 4:</span> Lưu lượng khách dự kiến thấp vào buổi chiều (sau 14h). Có thể <strong>giảm tốc độ hoặc tạm dừng</strong> để tiết kiệm năng lượng và chi phí vận hành.</li>
-                <li><span class="font-medium text-indigo-700">Tuyến 8 & 9:</span> OEE hiện tại đang ở mức tối ưu. Tiếp tục duy trì cấu hình vận hành hiện tại.</li>
-            </ul>
-        </div>
-    `;
-    
-    showToast('Đã tính toán OEE thành công', 'success');
 });
+
+async function generateAISuggestions(oeeSummary, dateStr) {
+    const aiSuggestion = document.getElementById('ai-suggestion-content');
+    aiSuggestion.innerHTML = '<div class="flex items-center gap-2 text-indigo-600"><i class="fas fa-circle-notch fa-spin"></i> <span>AI đang phân tích dữ liệu...</span></div>';
+
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        
+        const prompt = `
+            Bạn là một chuyên gia vận hành hệ thống cáp treo. 
+            Dưới đây là dữ liệu OEE (Hiệu suất thiết bị tổng thể) của các tuyến cáp trong ngày ${dateStr}:
+            ${JSON.stringify(oeeSummary)}
+            
+            Hãy đưa ra 3-4 nhận xét và gợi ý vận hành cụ thể cho các tuyến cáp này để tối ưu hóa hiệu suất và tiết kiệm năng lượng.
+            Yêu cầu:
+            - Trả về kết quả dưới dạng danh sách <li> (HTML).
+            - Ngôn ngữ: Tiếng Việt.
+            - Ngắn gọn, súc tích, chuyên nghiệp.
+            - Nếu OEE thấp (< 75%), hãy gợi ý kiểm tra lưu lượng khách hoặc điều chỉnh tốc độ.
+            - Nếu OEE cao (> 90%), hãy khen ngợi và duy trì.
+        `;
+
+        const response = await ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: prompt,
+        });
+
+        const text = response.text;
+        aiSuggestion.innerHTML = `
+            <div class="bg-white/60 rounded-lg p-4 border border-indigo-100/50">
+                <ul class="space-y-2 list-disc list-inside">
+                    ${text}
+                </ul>
+            </div>
+        `;
+    } catch (error) {
+        console.error("Lỗi gọi AI:", error);
+        aiSuggestion.innerHTML = '<p class="text-rose-500 italic">Không thể kết nối với AI để lấy gợi ý. Vui lòng thử lại sau.</p>';
+    }
+}
 
 // Initialize
 setTimeout(() => {
