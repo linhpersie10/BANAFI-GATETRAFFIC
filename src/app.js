@@ -13,6 +13,7 @@ let auth;
 let currentUser = null;
 let userRole = 'user'; // 'admin' or 'user'
 let userStatus = 'pending'; // 'approved' or 'pending'
+let lastRequestId = 0;
 
 function updateAuthUI() {
     const loginBtns = [
@@ -1275,6 +1276,7 @@ function handleDateChange() {
 
 async function loadDashboardData(dateStr, endDateStr = null) {
     if (!db) return;
+    const requestId = ++lastRequestId;
     showLoading(true, 'Đang tải dữ liệu báo cáo...');
     
     try {
@@ -1290,9 +1292,9 @@ async function loadDashboardData(dateStr, endDateStr = null) {
         }
         const snapshot = await getDocs(q);
         
-        currentGlobalData = [];
+        const newCurrentData = [];
         snapshot.forEach(doc => {
-            currentGlobalData.push(doc.data());
+            newCurrentData.push(doc.data());
         });
 
         // 2. Tải dữ liệu so sánh (Hôm qua hoặc Tuần trước)
@@ -1315,7 +1317,7 @@ async function loadDashboardData(dateStr, endDateStr = null) {
             compEnd = dEnd.toISOString().split('T')[0];
         }
 
-        comparisonGlobalData = [];
+        const newComparisonData = [];
         if (compStart) {
             let qComp;
             if (compEnd && compEnd !== compStart) {
@@ -1328,14 +1330,22 @@ async function loadDashboardData(dateStr, endDateStr = null) {
             }
             const compSnapshot = await getDocs(qComp);
             compSnapshot.forEach(doc => {
-                comparisonGlobalData.push(doc.data());
+                newComparisonData.push(doc.data());
             });
         }
 
         // 3. Tải cấu hình vận hành cáp treo cho ngày này
         const opDocRef = doc(db, 'cable_operations', dateStr);
         const opDocSnap = await getDoc(opDocRef);
-        currentDayCableOperations = opDocSnap.exists() ? opDocSnap.data().cableData : null;
+        const newCableOps = opDocSnap.exists() ? opDocSnap.data().cableData : null;
+
+        // Kiểm tra xem đây có còn là yêu cầu mới nhất không
+        if (requestId !== lastRequestId) return;
+
+        // Cập nhật các biến global một lần duy nhất
+        currentGlobalData = newCurrentData;
+        comparisonGlobalData = newComparisonData;
+        currentDayCableOperations = newCableOps;
 
         updateDashboardUI();
         updateGateSelector();
@@ -1977,8 +1987,8 @@ function renderGateDetails(gateName) {
     if (hasOEEData) {
         // Actual Capacity (Priority)
         capacityLabel = 'Công suất vận hành (Thực tế)';
-        capacityColor = 'rgba(59, 130, 246, 0.2)';
-        capacityBorder = 'rgba(59, 130, 246, 0.4)';
+        capacityColor = 'rgba(59, 130, 246, 0.5)';
+        capacityBorder = 'rgba(59, 130, 246, 0.8)';
         capacityData = rawHours.map(hour => {
             const hourInt = parseInt(hour.split(':')[0]);
             let totalActual = 0;
@@ -2005,8 +2015,8 @@ function renderGateDetails(gateName) {
     } else {
         // Max Capacity (Fallback)
         capacityLabel = 'Công suất tối đa (Lý thuyết)';
-        capacityColor = 'rgba(148, 163, 184, 0.1)';
-        capacityBorder = 'rgba(148, 163, 184, 0.2)';
+        capacityColor = 'rgba(100, 116, 139, 0.5)'; // Darker slate with 50% opacity
+        capacityBorder = 'rgba(100, 116, 139, 0.8)';
         capacityData = rawHours.map(hour => {
             const hourInt = parseInt(hour.split(':')[0]);
             let totalMax = 0;
@@ -2022,7 +2032,9 @@ function renderGateDetails(gateName) {
         });
     }
 
-    if (capacityData.some(c => c > 0)) {
+    // Chỉ hiển thị cột công suất khi có một nhà ga cụ thể được chọn
+    // Điều này giúp trục Y cân đối hơn khi xem tổng thể tất cả nhà ga
+    if (gateName && gateName !== "" && capacityData.some(c => c > 0)) {
         datasets.push({
             label: capacityLabel,
             data: capacityData,
