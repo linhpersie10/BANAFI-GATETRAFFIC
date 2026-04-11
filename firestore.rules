@@ -18,12 +18,28 @@ service cloud.firestore {
     //
     // ===============================================================
 
+    // Collection: cable_operations
+    // Document ID: YYYY-MM-DD
+    // Fields:
+    //   - date: string (required) - YYYY-MM-DD format
+    //   - cableData: map (required) - Map of Cable ID to operation details
+    //   - updatedAt: string (required) - ISO 8601 timestamp
+    //
+    // ===============================================================
+
     // Helper Functions
     function isAuthenticated() {
-      // Bypassing Firebase Auth as requested to use a hardcoded client-side login.
-      // WARNING: This makes the database publicly readable/writable. 
-      // In a real production app, you should use Firebase Auth or a custom backend.
-      return true;
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "linh.persie.10@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
     }
 
     function hasRequiredFields(fields) {
@@ -53,13 +69,34 @@ service cloud.firestore {
              isValidTimestampString(data.updatedAt);
     }
 
+    function isValidCableOperation(data) {
+      return hasOnlyAllowedFields(['date', 'cableData', 'updatedAt']) &&
+             hasRequiredFields(['date', 'cableData', 'updatedAt']) &&
+             isValidDateString(data.date) &&
+             data.cableData is map &&
+             isValidTimestampString(data.updatedAt);
+    }
+
     match /gate_statistics/{statId} {
-      // For this internal dashboard, we assume any authenticated user can read and write.
-      // In a real production app, we would restrict this to specific roles (e.g., isAdmin()).
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidGateStatistic(request.resource.data);
-      allow update: if isAuthenticated() && isValidGateStatistic(request.resource.data);
-      allow delete: if isAuthenticated(); // Allow deletion for data management
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /cable_operations/{date} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /daily_summaries/{date} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(userId);
+      allow update: if isAdmin() || (isOwner(userId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'status']));
+      allow delete: if isAdmin();
     }
   }
 }

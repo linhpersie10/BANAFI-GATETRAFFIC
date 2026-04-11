@@ -93,6 +93,10 @@
                     <i class="fas fa-chart-line w-5 text-center"></i>
                     <span>Tính OEE Tuyến Cáp</span>
                 </button>
+                <button onclick="switchTab('user-management')" id="nav-user-management" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-white transition-all text-left font-medium hidden">
+                    <i class="fas fa-users-cog w-5 text-center"></i>
+                    <span>Quản trị người dùng</span>
+                </button>
             </nav>
         </div>
 
@@ -133,6 +137,18 @@
                     </div>
                     <button id="submit-login-btn" class="w-full bg-blue-600 text-white px-4 py-2.5 rounded-lg font-medium hover:bg-blue-700 transition mt-2">
                         Đăng nhập
+                    </button>
+                    <div class="relative my-4">
+                        <div class="absolute inset-0 flex items-center">
+                            <div class="w-full border-t border-slate-200"></div>
+                        </div>
+                        <div class="relative flex justify-center text-sm">
+                            <span class="px-2 bg-white text-slate-500">Hoặc</span>
+                        </div>
+                    </div>
+                    <button id="google-login-btn" class="w-full bg-white border border-slate-300 text-slate-700 px-4 py-2.5 rounded-lg font-medium hover:bg-slate-50 transition flex items-center justify-center gap-2">
+                        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5" alt="Google">
+                        Đăng nhập bằng Google
                     </button>
                     <button id="cancel-login-btn" class="w-full bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg font-medium hover:bg-slate-50 transition mt-2">
                         Hủy
@@ -500,7 +516,7 @@
             </div>
 
             <!-- Tính OEE Tuyến Cáp Tab -->
-            <div id="tab-cable-oee" class="tab-content hidden max-w-6xl mx-auto space-y-6">
+            <div id="tab-cable-oee" class="tab-content hidden w-full px-2 md:px-4 space-y-6">
                 <!-- Control Panel -->
                 <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
                     <div class="flex flex-col md:flex-row gap-6 items-start md:items-center justify-between mb-6">
@@ -508,15 +524,21 @@
                             <h3 class="text-lg font-bold text-slate-800">Tính toán OEE Tuyến Cáp</h3>
                             <p class="text-sm text-slate-500 mt-1">Đánh giá hiệu suất tổng thể thiết bị dựa trên lưu lượng khách.</p>
                         </div>
-                        <div class="flex items-center gap-3">
-                            <input type="date" id="oee-date-picker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+                        <div class="flex flex-wrap items-center gap-3">
+                            <div class="flex items-center gap-2">
+                                <input type="date" id="oee-date-picker" class="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none">
+                                <span id="oee-status-badge" class="px-2 py-1 rounded-full text-xs font-bold uppercase tracking-wider hidden"></span>
+                            </div>
+                            <button id="btn-save-oee-config" class="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg font-medium text-sm transition-colors flex items-center gap-2">
+                                <i class="fas fa-save"></i> Lưu dữ liệu vận hành
+                            </button>
                             <button id="btn-calculate-oee" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors">
                                 Tính toán
                             </button>
                         </div>
                     </div>
                     
-                    <div id="oee-cable-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div id="oee-cable-list" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                         <!-- Rendered by JS -->
                     </div>
                 </div>
@@ -540,6 +562,41 @@
                 <!-- OEE Results -->
                 <div id="oee-results-container" class="hidden space-y-6">
                     <!-- Charts and tables will be injected here -->
+                </div>
+            </div>
+
+            <!-- TAB 7: USER MANAGEMENT -->
+            <div id="tab-user-management" class="tab-content space-y-6 hidden">
+                <div class="bg-white rounded-xl p-6 shadow-sm border border-slate-200">
+                    <div class="flex justify-between items-center mb-6">
+                        <div>
+                            <h3 class="text-lg font-bold text-slate-800">Danh sách người dùng</h3>
+                            <p class="text-sm text-slate-500">Quản lý quyền truy cập và vai trò của người dùng hệ thống</p>
+                        </div>
+                        <button onclick="loadUserManagement()" class="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition">
+                            <i class="fas fa-sync-alt"></i>
+                        </button>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="border-b border-slate-100">
+                                    <th class="py-3 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Người dùng</th>
+                                    <th class="py-3 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Email</th>
+                                    <th class="py-3 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Vai trò</th>
+                                    <th class="py-3 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Trạng thái</th>
+                                    <th class="py-3 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Thao tác</th>
+                                </tr>
+                            </thead>
+                            <tbody id="user-list-body">
+                                <!-- Users will be loaded here -->
+                                <tr>
+                                    <td colspan="5" class="py-8 text-center text-slate-400 italic">Đang tải danh sách người dùng...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
 
@@ -571,6 +628,10 @@
         <button onclick="switchTab('cable-oee')" id="nav-mobile-cable-oee" class="flex-1 flex flex-col items-center gap-1 py-3 text-slate-400 hover:text-slate-600 transition-colors">
             <i class="fas fa-chart-line text-lg"></i>
             <span class="text-[10px] font-medium">OEE</span>
+        </button>
+        <button onclick="switchTab('user-management')" id="nav-mobile-user-management" class="flex-1 flex flex-col items-center gap-1 py-3 text-slate-400 hover:text-slate-600 transition-colors hidden">
+            <i class="fas fa-users-cog text-lg"></i>
+            <span class="text-[10px] font-medium">User</span>
         </button>
     </nav>
 

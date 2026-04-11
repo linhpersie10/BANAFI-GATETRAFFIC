@@ -2,18 +2,120 @@ import Papa from 'https://cdn.jsdelivr.net/npm/papaparse@5.4.1/+esm';
 import * as XLSX from 'https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs';
 import Chart from 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/auto/+esm';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js';
-import { getFirestore, collection, query, where, getDocs, writeBatch, doc, deleteDoc, orderBy, limit } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js';
+import { getFirestore, collection, query, where, getDocs, writeBatch, doc, deleteDoc, orderBy, limit, getDoc, setDoc } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js';
+import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js';
 import { GoogleGenAI } from "@google/genai";
 import config from '../firebase-applet-config.json';
 
 // --- FIREBASE INITIALIZATION ---
 let db;
-let currentUser = null; // Custom auth state
+let auth;
+let currentUser = null;
+let userRole = 'user'; // 'admin' or 'user'
+let userStatus = 'pending'; // 'approved' or 'pending'
+
+function updateAuthUI() {
+    const loginBtns = [
+        document.getElementById('tab-login-btn'),
+        document.getElementById('login-btn'),
+        document.getElementById('mobile-login-btn')
+    ];
+    const logoutBtns = [
+        document.getElementById('tab-logout-btn'),
+        document.getElementById('logout-btn'),
+        document.getElementById('mobile-logout-btn')
+    ];
+    const userName = document.getElementById('user-name');
+    const deleteBtn = document.getElementById('delete-data-btn');
+    const mode = document.getElementById('view-mode')?.value;
+    const currentDate = document.getElementById('global-date')?.value;
+    const uploadDate = document.getElementById('upload-date')?.value;
+
+    if (currentUser) {
+        if (userName) userName.textContent = currentUser.displayName || currentUser.email || 'User';
+        loginBtns.forEach(btn => btn?.classList.add('hidden'));
+        logoutBtns.forEach(btn => btn?.classList.remove('hidden'));
+        if (deleteBtn) deleteBtn.classList.toggle('hidden', userRole !== 'admin');
+        
+        // Show/Hide Admin Tabs
+        const isAdmin = userRole === 'admin';
+        document.getElementById('nav-user-management')?.classList.toggle('hidden', !isAdmin);
+        document.getElementById('nav-mobile-user-management')?.classList.toggle('hidden', !isAdmin);
+        
+        // Show auth section if hidden
+        document.getElementById('auth-section')?.parentElement?.classList.remove('hidden');
+
+        // Tải dữ liệu dựa trên mode hiện tại
+        if (mode === 'week') {
+            if (typeof handleWeekChange === 'function') handleWeekChange();
+        } else if (currentDate) {
+            if (typeof loadDashboardData === 'function') loadDashboardData(currentDate);
+        }
+        if (uploadDate && typeof checkExistingData === 'function') checkExistingData(uploadDate);
+    } else {
+        if (userName) userName.textContent = 'Chưa đăng nhập';
+        loginBtns.forEach(btn => btn?.classList.remove('hidden'));
+        logoutBtns.forEach(btn => btn?.classList.add('hidden'));
+        if (deleteBtn) deleteBtn.classList.add('hidden');
+
+        // Tải dữ liệu dựa trên mode hiện tại
+        if (mode === 'week') {
+            if (typeof handleWeekChange === 'function') handleWeekChange();
+        } else if (currentDate) {
+            if (typeof loadDashboardData === 'function') loadDashboardData(currentDate);
+        }
+        
+        // Cập nhật trạng thái upload
+        if (uploadDate && typeof checkExistingData === 'function') checkExistingData(uploadDate);
+    }
+    if (typeof checkUploadReadiness === 'function') checkUploadReadiness();
+}
 
 async function initFirebase() {
     try {
         const app = initializeApp(config);
         db = getFirestore(app, config.firestoreDatabaseId);
+        auth = getAuth(app);
+        
+        // Listen for auth state changes
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                currentUser = user;
+                // Fetch user role and status from Firestore
+                try {
+                    const userDocRef = doc(db, 'users', user.uid);
+                    const userDocSnap = await getDoc(userDocRef);
+                    
+                    if (userDocSnap.exists()) {
+                        const userData = userDocSnap.data();
+                        userRole = userData.role || 'user';
+                        userStatus = userData.status || 'pending';
+                    } else {
+                        // Create new user profile
+                        const isInitialAdmin = user.email === "linh.persie.10@gmail.com";
+                        userRole = isInitialAdmin ? 'admin' : 'user';
+                        userStatus = isInitialAdmin ? 'approved' : 'pending';
+                        
+                        await setDoc(userDocRef, {
+                            uid: user.uid,
+                            email: user.email,
+                            displayName: user.displayName,
+                            photoURL: user.photoURL,
+                            role: userRole,
+                            status: userStatus,
+                            createdAt: new Date().toISOString()
+                        });
+                    }
+                } catch (error) {
+                    console.error("Error fetching user profile:", error);
+                }
+            } else {
+                currentUser = null;
+                userRole = 'user';
+                userStatus = 'pending';
+            }
+            updateAuthUI();
+        });
         
         // Populate weeks for the selector
         populateWeekSelector();
@@ -24,7 +126,12 @@ async function initFirebase() {
         document.getElementById('global-date').value = finalDate;
         document.getElementById('upload-date').value = finalDate;
         
+        // Sync OEE date picker
+        const oeeDatePicker = document.getElementById('oee-date-picker');
+        if (oeeDatePicker) oeeDatePicker.value = finalDate;
+
         setupAuthListeners();
+        renderOEECableList();
     } catch (error) {
         console.error("Lỗi khởi tạo Firebase:", error);
         showNotification("Lỗi hệ thống", "Không thể kết nối đến cơ sở dữ liệu. Vui lòng kiểm tra cấu hình.", "error");
@@ -94,60 +201,22 @@ async function findLatestDate() {
 // --- AUTHENTICATION ---
 function setupAuthListeners() {
     const loginBtns = [
-        document.getElementById('tab-login-btn')
+        document.getElementById('tab-login-btn'),
+        document.getElementById('login-btn'),
+        document.getElementById('mobile-login-btn')
     ];
     const logoutBtns = [
-        document.getElementById('tab-logout-btn')
+        document.getElementById('tab-logout-btn'),
+        document.getElementById('logout-btn'),
+        document.getElementById('mobile-logout-btn')
     ];
-    const userName = document.getElementById('user-name');
     const loginModal = document.getElementById('login-modal');
     const loginIdInput = document.getElementById('login-id');
     const loginPasswordInput = document.getElementById('login-password');
     const submitLoginBtn = document.getElementById('submit-login-btn');
+    const googleLoginBtn = document.getElementById('google-login-btn');
     const cancelLoginBtn = document.getElementById('cancel-login-btn');
     const loginError = document.getElementById('login-error');
-
-    // Load saved user
-    const savedUser = localStorage.getItem('banafi_user');
-    if (savedUser) {
-        currentUser = JSON.parse(savedUser);
-    }
-
-    const updateAuthUI = () => {
-        const mode = document.getElementById('view-mode').value;
-        const currentDate = document.getElementById('global-date').value;
-        const uploadDate = document.getElementById('upload-date').value;
-
-        if (currentUser) {
-            if (userName) userName.textContent = currentUser.displayName;
-            // Sidebar/Header buttons are hidden in HTML, but we keep the logic for consistency
-            loginBtns.forEach(btn => btn?.classList.add('hidden'));
-            logoutBtns.forEach(btn => btn?.classList.remove('hidden'));
-            
-            // Tải dữ liệu dựa trên mode hiện tại
-            if (mode === 'week') {
-                handleWeekChange();
-            } else if (currentDate) {
-                loadDashboardData(currentDate);
-            }
-            if (uploadDate) checkExistingData(uploadDate);
-        } else {
-            if (userName) userName.textContent = 'Chưa đăng nhập';
-            loginBtns.forEach(btn => btn?.classList.remove('hidden'));
-            logoutBtns.forEach(btn => btn?.classList.add('hidden'));
-            
-            // Tải dữ liệu dựa trên mode hiện tại
-            if (mode === 'week') {
-                handleWeekChange();
-            } else if (currentDate) {
-                loadDashboardData(currentDate);
-            }
-            
-            // Cập nhật trạng thái upload
-            if (uploadDate) checkExistingData(uploadDate);
-        }
-        checkUploadReadiness();
-    };
 
     loginBtns.forEach(btn => btn?.addEventListener('click', () => {
         loginModal.classList.remove('hidden');
@@ -176,14 +245,38 @@ function setupAuthListeners() {
     };
 
     submitLoginBtn.addEventListener('click', handleLogin);
+    
+    if (googleLoginBtn) {
+        googleLoginBtn.addEventListener('click', async () => {
+            const provider = new GoogleAuthProvider();
+            try {
+                await signInWithPopup(auth, provider);
+                loginModal.classList.add('hidden');
+                showNotification("Thành công", "Đã đăng nhập bằng Google", "success");
+            } catch (error) {
+                console.error("Lỗi đăng nhập Google:", error);
+                showNotification("Lỗi đăng nhập", "Không thể đăng nhập bằng Google. Vui lòng thử lại.", "error");
+            }
+        });
+    }
+
     loginPasswordInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') handleLogin();
     });
 
-    logoutBtns.forEach(btn => btn?.addEventListener('click', () => {
-        currentUser = null;
-        localStorage.removeItem('banafi_user');
-        updateAuthUI();
+    logoutBtns.forEach(btn => btn?.addEventListener('click', async () => {
+        try {
+            if (auth.currentUser) {
+                await signOut(auth);
+            } else {
+                currentUser = null;
+                localStorage.removeItem('banafi_user');
+                updateAuthUI();
+            }
+            showNotification("Đã đăng xuất", "Hẹn gặp lại bạn!", "success");
+        } catch (error) {
+            console.error("Lỗi đăng xuất:", error);
+        }
     }));
 
     // Initial UI update
@@ -227,9 +320,14 @@ window.switchTab = function(tabId) {
         'dashboard': 'Tổng quan hệ thống',
         'gate-details': 'Chi tiết Nhà Ga',
         'productivity': 'Báo cáo năng suất nhân sự',
-        'data-entry': 'Quản lý Dữ liệu'
+        'data-entry': 'Quản lý Dữ liệu',
+        'user-management': 'Quản trị người dùng'
     };
     document.getElementById('page-title').textContent = titles[tabId] || 'Hệ thống BNC';
+    
+    if (tabId === 'user-management') {
+        loadUserManagement();
+    }
     
     // Refresh charts if needed
     if (tabId === 'dashboard' && dashboardChart) {
@@ -896,13 +994,129 @@ async function uploadToFirestore(aggregatedData, targetDate) {
     }
 }
 
-// --- DASHBOARD & VISUALIZATION LOGIC ---
+// --- USER MANAGEMENT LOGIC ---
+async function loadUserManagement() {
+    if (userRole !== 'admin') return;
+    
+    const tbody = document.getElementById('user-list-body');
+    if (!tbody) return;
+    
+    try {
+        const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
+        const snapshot = await getDocs(q);
+        
+        tbody.innerHTML = '';
+        
+        if (snapshot.empty) {
+            tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-slate-400 italic">Chưa có người dùng nào.</td></tr>';
+            return;
+        }
+        
+        snapshot.forEach(docSnap => {
+            const user = docSnap.data();
+            const tr = document.createElement('tr');
+            tr.className = 'border-b border-slate-50 hover:bg-slate-50 transition-colors';
+            
+            const isSelf = currentUser && user.uid === currentUser.uid;
+            
+            tr.innerHTML = `
+                <td class="py-4 px-4">
+                    <div class="flex items-center gap-3">
+                        <img src="${user.photoURL || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(user.displayName || 'U')}" class="w-8 h-8 rounded-full border border-slate-200">
+                        <div class="min-w-0">
+                            <p class="text-sm font-bold text-slate-800 truncate">${user.displayName || 'N/A'}</p>
+                            <p class="text-[10px] text-slate-400 truncate">ID: ${user.uid}</p>
+                        </div>
+                    </div>
+                </td>
+                <td class="py-4 px-4 text-sm text-slate-600">${user.email || 'N/A'}</td>
+                <td class="py-4 px-4">
+                    <span class="px-2 py-1 rounded-full text-[10px] font-bold uppercase ${user.role === 'admin' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600'}">
+                        ${user.role === 'admin' ? 'Admin' : 'User'}
+                    </span>
+                </td>
+                <td class="py-4 px-4">
+                    <span class="px-2 py-1 rounded-full text-[10px] font-bold uppercase ${user.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">
+                        ${user.status === 'approved' ? 'Đã duyệt' : 'Chờ duyệt'}
+                    </span>
+                </td>
+                <td class="py-4 px-4 text-right">
+                    <div class="flex justify-end gap-2">
+                        ${user.status === 'pending' ? `
+                            <button onclick="updateUserStatus('${user.uid}', 'approved')" class="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded transition" title="Duyệt người dùng">
+                                <i class="fas fa-check"></i>
+                            </button>
+                        ` : ''}
+                        
+                        ${!isSelf ? `
+                            <button onclick="toggleUserRole('${user.uid}', '${user.role}')" class="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded transition" title="${user.role === 'admin' ? 'Thu hồi quyền Admin' : 'Cấp quyền Admin'}">
+                                <i class="fas ${user.role === 'admin' ? 'fa-user-minus' : 'fa-user-shield'}"></i>
+                            </button>
+                            <button onclick="deleteUserAccount('${user.uid}')" class="p-1.5 text-rose-600 hover:bg-rose-50 rounded transition" title="Xóa người dùng">
+                                <i class="fas fa-trash-alt"></i>
+                            </button>
+                        ` : '<span class="text-[10px] text-slate-400 italic px-2">Bản thân</span>'}
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    } catch (error) {
+        console.error("Error loading users:", error);
+        showNotification("Lỗi", "Không thể tải danh sách người dùng", "error");
+    }
+}
+
+window.updateUserStatus = async function(uid, status) {
+    if (userRole !== 'admin') return;
+    try {
+        await setDoc(doc(db, 'users', uid), { status }, { merge: true });
+        showNotification("Thành công", "Đã cập nhật trạng thái người dùng", "success");
+        loadUserManagement();
+    } catch (error) {
+        console.error("Error updating status:", error);
+        showNotification("Lỗi", "Không thể cập nhật trạng thái", "error");
+    }
+};
+
+window.toggleUserRole = async function(uid, currentRole) {
+    if (userRole !== 'admin') return;
+    const newRole = currentRole === 'admin' ? 'user' : 'admin';
+    const action = newRole === 'admin' ? "Cấp quyền Admin" : "Thu hồi quyền Admin";
+    
+    if (!confirm(`Bạn có chắc chắn muốn ${action} cho người dùng này?`)) return;
+    
+    try {
+        await setDoc(doc(db, 'users', uid), { role: newRole }, { merge: true });
+        showNotification("Thành công", `Đã ${action.toLowerCase()}`, "success");
+        loadUserManagement();
+    } catch (error) {
+        console.error("Error toggling role:", error);
+        showNotification("Lỗi", "Không thể thay đổi quyền hạn", "error");
+    }
+};
+
+window.deleteUserAccount = async function(uid) {
+    if (userRole !== 'admin') return;
+    
+    if (!confirm("Bạn có chắc chắn muốn xóa người dùng này khỏi hệ thống? Thao tác này không thể hoàn tác.")) return;
+    
+    try {
+        await deleteDoc(doc(db, 'users', uid));
+        showNotification("Thành công", "Đã xóa người dùng", "success");
+        loadUserManagement();
+    } catch (error) {
+        console.error("Error deleting user:", error);
+        showNotification("Lỗi", "Không thể xóa người dùng", "error");
+    }
+};
 let dashboardChart = null;
 let gatePieChart = null;
 let hourPieChart = null;
 let gateLineChart = null;
 let currentGlobalData = []; // Lưu trữ dữ liệu của ngày đang chọn
 let comparisonGlobalData = []; // Lưu trữ dữ liệu của khung thời gian so sánh
+let currentDayCableOperations = null; // Lưu trữ cấu hình vận hành cáp treo của ngày đang chọn
 let dashboardIntervalMode = '1h'; // '1h' or '30m'
 
 // Bảng màu cố định để đảm bảo tính nhất quán giữa các ngày
@@ -1085,6 +1299,11 @@ async function loadDashboardData(dateStr, endDateStr = null) {
                 comparisonGlobalData.push(doc.data());
             });
         }
+
+        // 3. Tải cấu hình vận hành cáp treo cho ngày này
+        const opDocRef = doc(db, 'cable_operations', dateStr);
+        const opDocSnap = await getDoc(opDocRef);
+        currentDayCableOperations = opDocSnap.exists() ? opDocSnap.data().cableData : null;
 
         updateDashboardUI();
         updateGateSelector();
@@ -1701,9 +1920,92 @@ function renderGateDetails(gateName) {
             pointBackgroundColor: '#ffffff',
             pointBorderColor: '#3b82f6',
             pointBorderWidth: 2,
-            pointRadius: 4
+            pointRadius: 4,
+            order: 2 // Line on top
         }
     ];
+
+    // --- CABLE CAPACITY BARS ---
+    const GATE_TO_CABLE_MAP = {
+        'Gate 1': 'Tuyến 1',
+        'Gate 5': 'Tuyến 3',
+        'Gate 9': 'Tuyến 4',
+        'Gate 15': 'Tuyến 6',
+        'Gate 19': 'Tuyến 8'
+    };
+
+    const cableConfigs = getCableConfigs();
+    const hasOEEData = currentDayCableOperations !== null;
+    
+    let capacityData = [];
+    let capacityLabel = '';
+    let capacityColor = '';
+    let capacityBorder = '';
+
+    if (hasOEEData) {
+        // Actual Capacity (Priority)
+        capacityLabel = 'Công suất vận hành (Thực tế)';
+        capacityColor = 'rgba(59, 130, 246, 0.2)';
+        capacityBorder = 'rgba(59, 130, 246, 0.4)';
+        capacityData = rawHours.map(hour => {
+            const hourInt = parseInt(hour.split(':')[0]);
+            let totalActual = 0;
+            cableConfigs.forEach((cable) => {
+                const isAssociated = !gateName || gateName === "" || GATE_TO_CABLE_MAP[gateName] === cable.name;
+                if (isAssociated) {
+                    const saved = currentDayCableOperations[cable.id];
+                    const segments = (saved && saved.segments) ? saved.segments : [{ start: '08:00', end: '17:00', speed: cable.maxSpeed, cabins: cable.maxCabins }];
+                    
+                    // Find segment for this hour
+                    const hourStr = hour.split(' ')[0]; // "08:00"
+                    const activeSeg = segments.find(s => hourStr >= s.start && hourStr < s.end);
+
+                    if (activeSeg) {
+                        const cabins = activeSeg.cabins || cable.maxCabins;
+                        const speed = activeSeg.speed || cable.maxSpeed;
+                        const capacityRatio = (cabins / cable.maxCabins) * (speed / cable.maxSpeed);
+                        totalActual += (cable.maxCapacity * capacityRatio) / 2;
+                    }
+                }
+            });
+            return totalActual;
+        });
+    } else {
+        // Max Capacity (Fallback)
+        capacityLabel = 'Công suất tối đa (Lý thuyết)';
+        capacityColor = 'rgba(148, 163, 184, 0.1)';
+        capacityBorder = 'rgba(148, 163, 184, 0.2)';
+        capacityData = rawHours.map(hour => {
+            const hourInt = parseInt(hour.split(':')[0]);
+            let totalMax = 0;
+            cableConfigs.forEach((cable) => {
+                const isAssociated = !gateName || gateName === "" || GATE_TO_CABLE_MAP[gateName] === cable.name;
+                if (isAssociated) {
+                    if (hourInt >= 8 && hourInt < 17) {
+                        totalMax += cable.maxCapacity / 2;
+                    }
+                }
+            });
+            return totalMax;
+        });
+    }
+
+    if (capacityData.some(c => c > 0)) {
+        datasets.push({
+            label: capacityLabel,
+            data: capacityData,
+            type: 'bar',
+            backgroundColor: capacityColor,
+            borderColor: capacityBorder,
+            borderWidth: 1,
+            borderRadius: 4,
+            order: 3,
+            yAxisID: 'y',
+            barPercentage: 0.8,
+            categoryPercentage: 0.9
+        });
+    }
+    // ---------------------------
 
     // Thêm line so sánh nếu có dữ liệu
     if (comparisonPassengerCounts.some(c => c > 0)) {
@@ -1723,12 +2025,43 @@ function renderGateDetails(gateName) {
         });
     }
 
+    const capacityRatioPlugin = {
+        id: 'capacityRatioPlugin',
+        afterDatasetsDraw(chart) {
+            const { ctx, data, scales: { x, y } } = chart;
+            if (!data.datasets || data.datasets.length === 0) return;
+            
+            const passengerDataset = data.datasets[0];
+            // Only draw for the main passenger line
+            if (passengerDataset.label && passengerDataset.label.includes('Lưu lượng khách')) {
+                ctx.save();
+                ctx.font = 'bold 10px Inter';
+                ctx.fillStyle = '#1d4ed8'; // Darker blue for readability
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+
+                passengerDataset.data.forEach((value, index) => {
+                    const capacity = capacityData[index];
+                    if (capacity > 0 && value > 0) {
+                        const ratio = (value / capacity) * 100;
+                        const xPos = x.getPixelForValue(data.labels[index]);
+                        const yPos = y.getPixelForValue(value);
+                        // Draw percentage above the point
+                        ctx.fillText(`${ratio.toFixed(0)}%`, xPos, yPos - 10);
+                    }
+                });
+                ctx.restore();
+            }
+        }
+    };
+
     gateLineChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: displayHours,
             datasets: datasets
         },
+        plugins: [capacityRatioPlugin],
         options: {
             responsive: true,
             maintainAspectRatio: false,
@@ -1753,6 +2086,16 @@ function renderGateDetails(gateName) {
                             }
                             if (context.parsed.y !== null) {
                                 label += context.parsed.y.toLocaleString('vi-VN') + ' vé';
+                                
+                                // Calculate and display ratio for the main passenger flow line
+                                if (context.datasetIndex === 0) {
+                                    const index = context.dataIndex;
+                                    const capacity = capacityData[index];
+                                    if (capacity > 0) {
+                                        const ratio = (context.parsed.y / capacity) * 100;
+                                        label += ` (${ratio.toFixed(1)}% công suất)`;
+                                    }
+                                }
                             }
                             return label;
                         }
@@ -2176,42 +2519,187 @@ document.getElementById('btn-add-cable')?.addEventListener('click', () => {
 });
 
 // --- OEE LOGIC ---
-function renderOEECableList() {
+async function checkOEEConfigStatus(date) {
+    const statusBadge = document.getElementById('oee-status-badge');
+    if (!statusBadge) return null;
+    
+    statusBadge.classList.remove('hidden', 'bg-emerald-100', 'text-emerald-700', 'bg-amber-100', 'text-amber-700');
+    statusBadge.classList.add('hidden');
+
+    if (!db || !date) return null;
+
+    try {
+        const docRef = doc(db, 'cable_operations', date);
+        const docSnap = await getDoc(docRef);
+
+        statusBadge.classList.remove('hidden');
+        if (docSnap.exists()) {
+            statusBadge.textContent = 'Đã có dữ liệu';
+            statusBadge.classList.add('bg-emerald-100', 'text-emerald-700');
+            return docSnap.data().cableData;
+        } else {
+            statusBadge.textContent = 'Chưa có dữ liệu';
+            statusBadge.classList.add('bg-amber-100', 'text-amber-700');
+            return null;
+        }
+    } catch (error) {
+        console.error("Lỗi kiểm tra trạng thái OEE:", error);
+        return null;
+    }
+}
+
+async function saveOEEConfig() {
+    const dateStr = document.getElementById('oee-date-picker').value;
+    if (!dateStr) {
+        showNotification('Lỗi', 'Vui lòng chọn ngày để lưu dữ liệu vận hành', 'error');
+        return;
+    }
+
+    if (!db) return;
+    showLoading(true, 'Đang lưu dữ liệu vận hành...');
+
+    try {
+        const configs = getCableConfigs();
+        const cableData = {};
+
+        configs.forEach((cable, cableIdx) => {
+            const toggle = document.getElementById(`oee-toggle-${cableIdx}`);
+            const segments = [];
+            
+            for (let segIdx = 0; segIdx < 5; segIdx++) {
+                const start = document.getElementById(`oee-start-${cableIdx}-${segIdx}`).value;
+                const end = document.getElementById(`oee-end-${cableIdx}-${segIdx}`).value;
+                const speed = parseFloat(document.getElementById(`oee-speed-${cableIdx}-${segIdx}`).value);
+                const cabins = parseInt(document.getElementById(`oee-cabins-${cableIdx}-${segIdx}`).value);
+                
+                if (start || end || !isNaN(speed) || !isNaN(cabins)) {
+                    segments.push({ start, end, speed, cabins });
+                }
+            }
+
+            cableData[cable.id] = {
+                active: toggle ? toggle.checked : true,
+                segments: segments
+            };
+        });
+
+        await setDoc(doc(db, 'cable_operations', dateStr), {
+            date: dateStr,
+            cableData: cableData,
+            updatedAt: new Date().toISOString()
+        });
+
+        showNotification('Thành công', `Đã lưu dữ liệu vận hành cho ngày ${dateStr}`, 'success');
+        checkOEEConfigStatus(dateStr);
+    } catch (error) {
+        console.error("Lỗi lưu dữ liệu vận hành:", error);
+        showNotification('Lỗi', 'Không thể lưu dữ liệu vận hành.', 'error');
+    } finally {
+        showLoading(false);
+    }
+}
+
+async function renderOEECableList() {
     const container = document.getElementById('oee-cable-list');
     if (!container) return;
+    
+    const dateStr = document.getElementById('oee-date-picker')?.value;
+    const savedData = await checkOEEConfigStatus(dateStr);
     
     const configs = getCableConfigs();
     container.innerHTML = '';
     
-    configs.forEach((cable, index) => {
+    configs.forEach((cable, cableIdx) => {
+        const saved = savedData ? savedData[cable.id] : null;
+        const isActive = saved ? saved.active : true;
+        
+        // Default to 5 segments
+        const segments = (saved && saved.segments) ? saved.segments : [
+            { start: '08:00', end: '17:00', speed: cable.maxSpeed, cabins: cable.maxCabins },
+            { start: '', end: '', speed: '', cabins: '' },
+            { start: '', end: '', speed: '', cabins: '' },
+            { start: '', end: '', speed: '', cabins: '' },
+            { start: '', end: '', speed: '', cabins: '' }
+        ];
+
         const card = document.createElement('div');
-        card.className = 'bg-slate-50 rounded-lg p-4 border border-slate-200';
+        card.className = 'bg-white rounded-xl p-5 border border-slate-200 shadow-sm';
+        
+        let rowsHtml = '';
+        segments.forEach((seg, segIdx) => {
+            const rowCapacity = (seg.speed && seg.cabins) 
+                ? Math.round((seg.cabins / cable.maxCabins) * (seg.speed / cable.maxSpeed) * cable.maxCapacity)
+                : 0;
+
+            rowsHtml += `
+                <tr class="border-b border-slate-50">
+                    <td class="py-2 pr-2">
+                        <input type="time" id="oee-start-${cableIdx}-${segIdx}" class="w-full border border-slate-200 rounded px-1 py-1 text-[11px]" value="${seg.start || ''}" oninput="updateRowCapacity(${cableIdx}, ${segIdx})">
+                    </td>
+                    <td class="py-2 px-2">
+                        <input type="time" id="oee-end-${cableIdx}-${segIdx}" class="w-full border border-slate-200 rounded px-1 py-1 text-[11px]" value="${seg.end || ''}" oninput="updateRowCapacity(${cableIdx}, ${segIdx})">
+                    </td>
+                    <td class="py-2 px-2">
+                        <input type="number" id="oee-speed-${cableIdx}-${segIdx}" step="0.1" class="w-full border border-slate-200 rounded px-1 py-1 text-[11px]" value="${seg.speed || ''}" placeholder="${cable.maxSpeed}" oninput="updateRowCapacity(${cableIdx}, ${segIdx})">
+                    </td>
+                    <td class="py-2 px-2">
+                        <input type="number" id="oee-cabins-${cableIdx}-${segIdx}" class="w-full border border-slate-200 rounded px-1 py-1 text-[11px]" value="${seg.cabins || ''}" placeholder="${cable.maxCabins}" oninput="updateRowCapacity(${cableIdx}, ${segIdx})">
+                    </td>
+                    <td class="py-2 pl-2 text-right">
+                        <span id="oee-cap-display-${cableIdx}-${segIdx}" class="text-[11px] font-bold text-indigo-600">${rowCapacity > 0 ? rowCapacity.toLocaleString() : '-'}</span>
+                    </td>
+                </tr>
+            `;
+        });
+
         card.innerHTML = `
-            <div class="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
-                <span class="font-bold text-slate-800">${cable.name}</span>
+            <div class="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
+                <div class="flex items-center gap-2">
+                    <div class="w-2 h-6 bg-indigo-500 rounded-full"></div>
+                    <span class="font-bold text-slate-800">${cable.name}</span>
+                </div>
                 <label class="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" id="oee-toggle-${index}" class="sr-only peer" checked>
-                    <div class="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                    <input type="checkbox" id="oee-toggle-${cableIdx}" class="sr-only peer" ${isActive ? 'checked' : ''}>
+                    <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
                 </label>
             </div>
-            <div class="space-y-3">
-                <div class="flex items-center justify-between">
-                    <label class="text-xs text-slate-600">Số cabin h.động</label>
-                    <input type="number" id="oee-cabins-${index}" class="w-20 border border-slate-300 rounded px-2 py-1 text-xs" value="${cable.maxCabins}">
-                </div>
-                <div class="flex items-center justify-between">
-                    <label class="text-xs text-slate-600">Tốc độ (m/s)</label>
-                    <input type="number" id="oee-speed-${index}" class="w-20 border border-slate-300 rounded px-2 py-1 text-xs" value="${cable.maxSpeed}">
-                </div>
-                <div class="flex items-center justify-between">
-                    <label class="text-xs text-slate-600">Giờ mở (VD: 8-17)</label>
-                    <input type="text" id="oee-hours-${index}" class="w-20 border border-slate-300 rounded px-2 py-1 text-xs" placeholder="Cả ngày">
-                </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                    <thead>
+                        <tr class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">
+                            <th class="pb-2 pr-2">Từ</th>
+                            <th class="pb-2 px-2">Đến</th>
+                            <th class="pb-2 px-2">Tốc độ</th>
+                            <th class="pb-2 px-2">Cabin</th>
+                            <th class="pb-2 pl-2 text-right">Công suất/h</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rowsHtml}
+                    </tbody>
+                </table>
             </div>
         `;
         container.appendChild(card);
     });
 }
+
+window.updateRowCapacity = function(cableIdx, segIdx) {
+    const configs = getCableConfigs();
+    const cable = configs[cableIdx];
+    if (!cable) return;
+
+    const speed = parseFloat(document.getElementById(`oee-speed-${cableIdx}-${segIdx}`).value);
+    const cabins = parseInt(document.getElementById(`oee-cabins-${cableIdx}-${segIdx}`).value);
+    const display = document.getElementById(`oee-cap-display-${cableIdx}-${segIdx}`);
+
+    if (!isNaN(speed) && !isNaN(cabins) && speed > 0 && cabins > 0) {
+        const capacity = Math.round((cabins / cable.maxCabins) * (speed / cable.maxSpeed) * cable.maxCapacity);
+        display.textContent = capacity.toLocaleString();
+    } else {
+        display.textContent = '-';
+    }
+};
 
 document.getElementById('btn-calculate-oee')?.addEventListener('click', async () => {
     const dateStr = document.getElementById('oee-date-picker').value;
@@ -2265,17 +2753,31 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
                         <tbody class="text-sm text-slate-700">
         `;
 
-        activeCables.forEach((cable, configIndex) => {
-            const gateName = cable.name;
+        activeCables.forEach((cable) => {
+            // Find original index in configs to access correct DOM elements
+            const configIndex = configs.findIndex(c => c.id === cable.id);
+            
+            // Map Cable Name to Gate Name based on user requirements
+            const CABLE_TO_GATE_MAP = {
+                'Tuyến 1': 'Gate 1',
+                'Tuyến 3': 'Gate 5',
+                'Tuyến 4': 'Gate 9',
+                'Tuyến 6': 'Gate 15',
+                'Tuyến 8': 'Gate 19'
+            };
+            const gateName = CABLE_TO_GATE_MAP[cable.name] || cable.name;
             const gateData = actualData[gateName];
             
-            // Lấy giờ hoạt động từ input (VD: 8-17)
-            const hoursInput = document.getElementById(`oee-hours-${configIndex}`).value;
-            let startH = 8, endH = 17;
-            if (hoursInput && hoursInput.includes('-')) {
-                const parts = hoursInput.split('-');
-                startH = parseInt(parts[0]) || 8;
-                endH = parseInt(parts[1]) || 17;
+            // Lấy các segments từ UI
+            const segments = [];
+            for (let segIdx = 0; segIdx < 5; segIdx++) {
+                const start = document.getElementById(`oee-start-${configIndex}-${segIdx}`).value;
+                const end = document.getElementById(`oee-end-${configIndex}-${segIdx}`).value;
+                const speed = parseFloat(document.getElementById(`oee-speed-${configIndex}-${segIdx}`).value);
+                const cabins = parseInt(document.getElementById(`oee-cabins-${configIndex}-${segIdx}`).value);
+                if (start && end && !isNaN(speed) && !isNaN(cabins)) {
+                    segments.push({ start, end, speed, cabins });
+                }
             }
 
             let totalOee = 0;
@@ -2284,15 +2786,30 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
 
             const hourlyHtml = hours.map(h => {
                 const hourInt = parseInt(h.split(':')[0]);
+                const hourStart = `${hourInt.toString().padStart(2, '0')}:00`;
                 
-                // Nếu ngoài giờ hoạt động thì N/A
-                if (hourInt < startH || hourInt >= endH) {
-                    return `<td class="py-3 text-center text-slate-300">N/A</td>`;
+                // Tìm segment phù hợp cho khung giờ này
+                const activeSeg = segments.find(s => hourStart >= s.start && hourStart < s.end);
+                
+                if (!activeSeg || !activeSeg.start || !activeSeg.end) {
+                    return `<td class="py-3 text-center text-slate-300">Đóng</td>`;
                 }
 
-                // Tính OEE cho giờ này
-                // OEE = (Thực tế) / (Công suất tối đa trong 1 giờ)
-                // Công suất tối đa = cable.maxCapacity
+                // Tính công suất thực tế dựa trên cấu hình segment
+                const capacityRatio = (activeSeg.cabins / cable.maxCabins) * (activeSeg.speed / cable.maxSpeed);
+                
+                // Trừ downtime định mức (phút) khỏi 60 phút của 1 giờ
+                // Phân bổ downtime đều cho tổng thời gian hoạt động
+                const totalOperatingMinutes = segments.reduce((acc, s) => {
+                    const [sH, sM] = s.start.split(':').map(Number);
+                    const [eH, eM] = s.end.split(':').map(Number);
+                    return acc + ((eH * 60 + eM) - (sH * 60 + sM));
+                }, 0);
+                
+                const scheduledDowntimeInHour = totalOperatingMinutes > 0 ? (cable.downtime || 0) * (60 / totalOperatingMinutes) : 0;
+                const effectiveMinutesInHour = Math.max(0, 60 - scheduledDowntimeInHour);
+                
+                const currentMaxCapacity = (cable.maxCapacity * capacityRatio) * (effectiveMinutesInHour / 60);
                 
                 let actualInHour = 0;
                 if (gateData && gateData.hourlyData) {
@@ -2307,19 +2824,6 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
                         actualInHour += Object.values(gateData.hourlyData[bucket2]).reduce((s, c) => s + c, 0);
                     }
                 }
-
-                // Hiệu chỉnh công suất dựa trên số cabin và tốc độ đang chạy
-                const actualCabins = parseInt(document.getElementById(`oee-cabins-${configIndex}`).value) || cable.maxCabins;
-                const actualSpeed = parseFloat(document.getElementById(`oee-speed-${configIndex}`).value) || cable.maxSpeed;
-                
-                // Tỷ lệ công suất = (cabin_thực / cabin_max) * (tốc_độ_thực / tốc_độ_max)
-                const capacityRatio = (actualCabins / cable.maxCabins) * (actualSpeed / cable.maxSpeed);
-                
-                // Trừ downtime định mức (phút) khỏi 60 phút của 1 giờ
-                const scheduledDowntimeInHour = (cable.downtime || 0) / (endH - startH); // Phân bổ downtime đều cho các giờ hoạt động
-                const effectiveMinutesInHour = Math.max(0, 60 - scheduledDowntimeInHour);
-                
-                const currentMaxCapacity = (cable.maxCapacity * capacityRatio) * (effectiveMinutesInHour / 60);
 
                 let oee = 0;
                 if (currentMaxCapacity > 0) {
@@ -2417,12 +2921,15 @@ async function generateAISuggestions(oeeSummary, dateStr) {
 // Initialize
 setTimeout(() => {
     renderCableConfigs();
-    renderOEECableList();
     
-    // Set default date to today
-    const today = new Date().toISOString().split('T')[0];
     const datePicker = document.getElementById('oee-date-picker');
-    if (datePicker) datePicker.value = today;
+    if (datePicker) {
+        datePicker.addEventListener('change', () => {
+            renderOEECableList();
+        });
+    }
+
+    document.getElementById('btn-save-oee-config')?.addEventListener('click', saveOEEConfig);
 }, 500);
 
 initFirebase();

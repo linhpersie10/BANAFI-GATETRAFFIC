@@ -73,6 +73,27 @@
         }
       },
       "required": ["date", "totalPassengers", "gateTotals", "hourlyTotals", "ticketTotals", "updatedAt"]
+    },
+    "CableOperation": {
+      "title": "CableOperation",
+      "description": "Operation parameters for cable cars on a specific date.",
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "description": "The date of operation in YYYY-MM-DD format."
+        },
+        "cableData": {
+          "type": "object",
+          "description": "Map of Cable ID to operation details (active, cabins, speed, hours)."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of the last update."
+        }
+      },
+      "required": ["date", "cableData", "updatedAt"]
     }
   },
   "firestore": {
@@ -87,6 +108,12 @@
         "$ref": "#/entities/DailySummary"
       },
       "description": "Stores daily aggregated summary for the entire facility."
+    },
+    "cable_operations/{date}": {
+      "schema": {
+        "$ref": "#/entities/CableOperation"
+      },
+      "description": "Stores daily operation parameters for cable cars."
     }
   }
 }
