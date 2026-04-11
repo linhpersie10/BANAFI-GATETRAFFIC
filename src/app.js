@@ -263,7 +263,9 @@ function setupAuthListeners() {
                 showNotification("Thành công", "Đã đăng nhập bằng Google", "success");
             } catch (error) {
                 console.error("Lỗi đăng nhập Google:", error);
-                showNotification("Lỗi đăng nhập", "Không thể đăng nhập bằng Google. Vui lòng thử lại.", "error");
+                console.error("Mã lỗi:", error.code);
+                console.error("Thông báo lỗi:", error.message);
+                showNotification("Lỗi đăng nhập", "Không thể đăng nhập bằng Google: " + error.message, "error");
             }
         });
     }
