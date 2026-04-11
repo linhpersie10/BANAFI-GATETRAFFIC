@@ -94,6 +94,34 @@
         }
       },
       "required": ["date", "cableData", "updatedAt"]
+    },
+    "CableConfigs": {
+      "title": "CableConfigs",
+      "description": "Global configuration for all cable car lines.",
+      "type": "object",
+      "properties": {
+        "configs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "length": { "type": "number" },
+              "maxCabins": { "type": "number" },
+              "maxSpeed": { "type": "number" },
+              "maxCapacity": { "type": "number" },
+              "downtime": { "type": "number" },
+              "enabled": { "type": "boolean" }
+            }
+          }
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["configs", "updatedAt"]
     }
   },
   "firestore": {
@@ -114,6 +142,12 @@
         "$ref": "#/entities/CableOperation"
       },
       "description": "Stores daily operation parameters for cable cars."
+    },
+    "app_settings/cable_configs": {
+      "schema": {
+        "$ref": "#/entities/CableConfigs"
+      },
+      "description": "Stores the global configuration for all cable car lines."
     }
   }
 }

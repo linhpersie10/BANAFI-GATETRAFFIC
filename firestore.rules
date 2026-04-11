@@ -25,6 +25,12 @@ service cloud.firestore {
     //   - cableData: map (required) - Map of Cable ID to operation details
     //   - updatedAt: string (required) - ISO 8601 timestamp
     //
+    // Collection: app_settings
+    // Document ID: cable_configs
+    // Fields:
+    //   - configs: list (required) - List of cable configurations
+    //   - updatedAt: string (required) - ISO 8601 timestamp
+    //
     // ===============================================================
 
     // Helper Functions
@@ -97,6 +103,11 @@ service cloud.firestore {
       allow create: if isAuthenticated() && isOwner(userId);
       allow update: if isAdmin() || (isOwner(userId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'status']));
       allow delete: if isAdmin();
+    }
+
+    match /app_settings/cable_configs {
+      allow read: if true;
+      allow write: if isAdmin();
     }
   }
 }

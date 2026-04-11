@@ -14,6 +14,26 @@ let currentUser = null;
 let userRole = 'user'; // 'admin' or 'user'
 let userStatus = 'pending'; // 'approved' or 'pending'
 let lastRequestId = 0;
+let cachedCableConfigs = null;
+
+async function loadCableConfigsFromFirestore() {
+    if (!db) return;
+    try {
+        const docRef = doc(db, 'app_settings', 'cable_configs');
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+            cachedCableConfigs = docSnap.data().configs;
+            localStorage.setItem('cableConfigs', JSON.stringify(cachedCableConfigs));
+            
+            // Re-render UI components that depend on cable configs
+            renderCableConfigs();
+            renderOEECableList();
+            initReportFilters();
+        }
+    } catch (error) {
+        console.error("Error loading cable configs from Firestore:", error);
+    }
+}
 
 function updateAuthUI() {
     const loginBtns = [
@@ -43,6 +63,17 @@ function updateAuthUI() {
         document.getElementById('nav-user-management')?.classList.toggle('hidden', !isAdmin);
         document.getElementById('nav-mobile-user-management')?.classList.toggle('hidden', !isAdmin);
         
+        // Show Restricted Tabs for authenticated users
+        const restrictedTabs = ['nav-data-entry', 'nav-cable-config', 'nav-mobile-data-entry', 'nav-mobile-cable-config'];
+        restrictedTabs.forEach(id => document.getElementById(id)?.classList.remove('hidden'));
+
+        // Cable Config Admin UI
+        document.getElementById('btn-add-cable')?.classList.toggle('hidden', !isAdmin);
+        document.getElementById('cable-config-action-header')?.classList.toggle('hidden', !isAdmin);
+
+        // Show OEE Save button
+        document.getElementById('btn-save-oee-config')?.classList.remove('hidden');
+
         // Show auth section if hidden
         document.getElementById('auth-section')?.parentElement?.classList.remove('hidden');
 
@@ -58,6 +89,28 @@ function updateAuthUI() {
         loginBtns.forEach(btn => btn?.classList.remove('hidden'));
         logoutBtns.forEach(btn => btn?.classList.add('hidden'));
         if (deleteBtn) deleteBtn.classList.add('hidden');
+
+        // Hide Admin Tabs
+        document.getElementById('nav-user-management')?.classList.add('hidden');
+        document.getElementById('nav-mobile-user-management')?.classList.add('hidden');
+
+        // Hide Restricted Tabs for non-authenticated users
+        const restrictedTabs = ['nav-data-entry', 'nav-cable-config', 'nav-mobile-data-entry', 'nav-mobile-cable-config'];
+        restrictedTabs.forEach(id => document.getElementById(id)?.classList.add('hidden'));
+
+        // Cable Config Admin UI
+        document.getElementById('btn-add-cable')?.classList.add('hidden');
+        document.getElementById('cable-config-action-header')?.classList.add('hidden');
+
+        // Hide OEE Save button
+        document.getElementById('btn-save-oee-config')?.classList.add('hidden');
+
+        // Redirect if on restricted tab
+        const restrictedTabIds = ['data-entry', 'cable-config', 'user-management'];
+        const currentTab = document.querySelector('.tab-content:not(.hidden)')?.id?.replace('tab-', '');
+        if (restrictedTabIds.includes(currentTab)) {
+            switchTab('dashboard');
+        }
 
         // Tải dữ liệu dựa trên mode hiện tại
         if (mode === 'week') {
@@ -120,6 +173,9 @@ async function initFirebase() {
         
         // Populate weeks for the selector
         populateWeekSelector();
+        
+        // Load cable configs from Firestore
+        await loadCableConfigsFromFirestore();
         
         // Luôn lấy ngày có dữ liệu gần nhất trong DB cho lần tải đầu tiên
         const finalDate = await findLatestDate();
@@ -2466,6 +2522,8 @@ const DEFAULT_CABLES = [
 let editingCableIndices = new Set();
 
 function getCableConfigs() {
+    if (cachedCableConfigs) return cachedCableConfigs;
+
     const stored = localStorage.getItem('cableConfigs');
     if (stored) {
         const configs = JSON.parse(stored);
@@ -2478,20 +2536,43 @@ function getCableConfigs() {
             }
         });
         if (modified) localStorage.setItem('cableConfigs', JSON.stringify(configs));
+        cachedCableConfigs = configs;
         return configs;
     }
+    cachedCableConfigs = DEFAULT_CABLES;
     localStorage.setItem('cableConfigs', JSON.stringify(DEFAULT_CABLES));
     return DEFAULT_CABLES;
 }
 
 window.toggleCableStatus = function(index, isEnabled) {
+    if (userRole !== 'admin') {
+        showNotification('Lỗi', 'Chỉ Admin mới có quyền thay đổi cấu hình', 'error');
+        return;
+    }
     const configs = getCableConfigs();
     configs[index].enabled = isEnabled;
     saveCableConfigs(configs);
 };
 
-function saveCableConfigs(configs) {
+async function saveCableConfigs(configs) {
+    cachedCableConfigs = configs;
     localStorage.setItem('cableConfigs', JSON.stringify(configs));
+    
+    // Save to Firestore if admin
+    if (db && userRole === 'admin') {
+        try {
+            const docRef = doc(db, 'app_settings', 'cable_configs');
+            await setDoc(docRef, {
+                configs: configs,
+                updatedAt: new Date().toISOString()
+            });
+            showNotification('Thành công', 'Đã lưu cấu hình lên hệ thống', 'success');
+        } catch (error) {
+            console.error("Error saving cable configs to Firestore:", error);
+            showNotification('Lỗi', 'Không thể lưu cấu hình lên hệ thống', 'error');
+        }
+    }
+
     renderCableConfigs();
     renderOEECableList(); // Update OEE list when config changes
     initReportFilters(); // Update report filters
@@ -2501,6 +2582,7 @@ function renderCableConfigs() {
     const tbody = document.getElementById('cable-config-tbody');
     if (!tbody) return;
     const configs = getCableConfigs();
+    const isAdmin = userRole === 'admin';
     
     tbody.innerHTML = '';
     configs.forEach((cable, index) => {
@@ -2524,11 +2606,12 @@ function renderCableConfigs() {
             <td class="py-3"><input type="number" ${disabledAttr} class="${inputNumClass}" value="${cable.maxCapacity}" onchange="updateCableConfig(${index}, 'maxCapacity', this.value)"></td>
             <td class="py-3"><input type="number" ${disabledAttr} class="${inputNumClass}" value="${cable.downtime || 0}" onchange="updateCableConfig(${index}, 'downtime', this.value)"></td>
             <td class="py-3">
-                <label class="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" class="sr-only peer" ${cable.enabled !== false ? 'checked' : ''} onchange="toggleCableStatus(${index}, this.checked)">
+                <label class="relative inline-flex items-center ${isAdmin ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}">
+                    <input type="checkbox" class="sr-only peer" ${cable.enabled !== false ? 'checked' : ''} ${isAdmin ? '' : 'disabled'} onchange="toggleCableStatus(${index}, this.checked)">
                     <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
                 </label>
             </td>
+            ${isAdmin ? `
             <td class="py-3 text-right whitespace-nowrap">
                 ${isEditing 
                     ? `<button onclick="saveCableRow(${index})" class="text-emerald-600 hover:text-emerald-700 p-1 mr-2" title="Lưu"><i class="fas fa-save"></i></button>`
@@ -2536,12 +2619,14 @@ function renderCableConfigs() {
                 }
                 <button onclick="deleteCableConfig(${index})" class="text-rose-500 hover:text-rose-700 p-1" title="Xóa"><i class="fas fa-trash"></i></button>
             </td>
+            ` : ''}
         `;
         tbody.appendChild(tr);
     });
 }
 
 window.updateCableConfig = function(index, field, value) {
+    if (userRole !== 'admin') return;
     const configs = getCableConfigs();
     configs[index][field] = field === 'name' ? value : Number(value);
     // Save to localStorage immediately but don't re-render to avoid losing focus
@@ -2550,17 +2635,29 @@ window.updateCableConfig = function(index, field, value) {
 };
 
 window.editCableRow = function(index) {
+    if (userRole !== 'admin') {
+        showNotification('Lỗi', 'Chỉ Admin mới có quyền sửa cấu hình', 'error');
+        return;
+    }
     editingCableIndices.add(index);
     renderCableConfigs();
 };
 
 window.saveCableRow = function(index) {
+    if (userRole !== 'admin') {
+        showNotification('Lỗi', 'Chỉ Admin mới có quyền lưu cấu hình', 'error');
+        return;
+    }
     editingCableIndices.delete(index);
     renderCableConfigs();
     showNotification('Thành công', 'Đã lưu cấu hình tuyến cáp', 'success');
 };
 
 window.deleteCableConfig = function(index) {
+    if (userRole !== 'admin') {
+        showNotification('Lỗi', 'Chỉ Admin mới có quyền xóa cấu hình', 'error');
+        return;
+    }
     showConfirm('Xác nhận xóa', 'Bạn có chắc chắn muốn xóa tuyến cáp này?', () => {
         const configs = getCableConfigs();
         configs.splice(index, 1);
@@ -2578,6 +2675,10 @@ window.deleteCableConfig = function(index) {
 };
 
 document.getElementById('btn-add-cable')?.addEventListener('click', () => {
+    if (userRole !== 'admin') {
+        showNotification('Lỗi', 'Chỉ Admin mới có quyền thêm cấu hình', 'error');
+        return;
+    }
     const configs = getCableConfigs();
     const newId = Date.now().toString();
     configs.push({
@@ -2625,6 +2726,10 @@ async function checkOEEConfigStatus(date) {
 }
 
 async function saveOEEConfig() {
+    if (!currentUser) {
+        showNotification('Lỗi', 'Bạn cần đăng nhập để thực hiện chức năng này', 'error');
+        return;
+    }
     const dateStr = document.getElementById('oee-date-picker').value;
     if (!dateStr) {
         showNotification('Lỗi', 'Vui lòng chọn ngày để lưu dữ liệu vận hành', 'error');
@@ -3076,8 +3181,12 @@ function updateReportVisibility() {
         trafficContainer.parentElement.classList.replace('lg:grid-cols-2', 'lg:grid-cols-1');
     }
     
-    if (window.reportTrafficChart) window.reportTrafficChart.resize();
-    if (window.reportOeeChart) window.reportOeeChart.resize();
+    try {
+        if (window.reportTrafficChart) window.reportTrafficChart.resize();
+        if (window.reportOeeChart) window.reportOeeChart.resize();
+    } catch (e) {
+        console.warn("Chart resize failed:", e);
+    }
 }
 
 async function generateReport() {
@@ -3359,75 +3468,93 @@ function processReportData(trafficData, oeeData, target, type, startDate, endDat
 
 function renderReportCharts(labels, trafficData, oeeActualData, oeeIdealData) {
     // Traffic Chart
-    const ctxTraffic = document.getElementById('report-traffic-chart').getContext('2d');
-    if (window.reportTrafficChart) window.reportTrafficChart.destroy();
-    
-    window.reportTrafficChart = new Chart(ctxTraffic, {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Lượt khách',
-                data: trafficData,
-                backgroundColor: 'rgba(79, 70, 229, 0.8)',
-                borderRadius: 4
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { 
-                legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 10 } } } 
-            },
-            scales: {
-                x: { grid: { display: false } },
-                y: { beginAtZero: true, grid: { borderDash: [2, 4] } }
+    const canvasTraffic = document.getElementById('report-traffic-chart');
+    if (canvasTraffic) {
+        const ctxTraffic = canvasTraffic.getContext('2d');
+        if (window.reportTrafficChart) {
+            try {
+                window.reportTrafficChart.destroy();
+            } catch (e) {
+                console.warn("Destroy traffic chart failed:", e);
             }
         }
-    });
+        
+        window.reportTrafficChart = new Chart(ctxTraffic, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Lượt khách',
+                    data: trafficData,
+                    backgroundColor: 'rgba(79, 70, 229, 0.8)',
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { 
+                    legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 10 } } } 
+                },
+                scales: {
+                    x: { grid: { display: false } },
+                    y: { beginAtZero: true, grid: { borderDash: [2, 4] } }
+                }
+            }
+        });
+    }
 
     // OEE Chart
-    const ctxOee = document.getElementById('report-oee-chart').getContext('2d');
-    if (window.reportOeeChart) window.reportOeeChart.destroy();
-    
-    window.reportOeeChart = new Chart(ctxOee, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [
-                {
-                    label: 'OEE Thực tế (%)',
-                    data: oeeActualData,
-                    borderColor: '#10b981',
-                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                    borderWidth: 2,
-                    fill: true,
-                    tension: 0.4
-                },
-                {
-                    label: 'OEE Lý tưởng (%)',
-                    data: oeeIdealData,
-                    borderColor: '#3b82f6',
-                    backgroundColor: 'transparent',
-                    borderWidth: 2,
-                    borderDash: [5, 5],
-                    tension: 0.4,
-                    fill: false
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { 
-                legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 10 } } } 
-            },
-            scales: {
-                x: { grid: { display: false } },
-                y: { beginAtZero: true, max: 100, grid: { borderDash: [2, 4] } }
+    const canvasOee = document.getElementById('report-oee-chart');
+    if (canvasOee) {
+        const ctxOee = canvasOee.getContext('2d');
+        if (window.reportOeeChart) {
+            try {
+                window.reportOeeChart.destroy();
+            } catch (e) {
+                console.warn("Destroy OEE chart failed:", e);
             }
         }
-    });
+        
+        window.reportOeeChart = new Chart(ctxOee, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'OEE Thực tế (%)',
+                        data: oeeActualData,
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    },
+                    {
+                        label: 'OEE Lý tưởng (%)',
+                        data: oeeIdealData,
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'transparent',
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        tension: 0.4,
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { 
+                    legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 10 } } } 
+                },
+                scales: {
+                    x: { grid: { display: false } },
+                    y: { beginAtZero: true, max: 100, grid: { borderDash: [2, 4] } }
+                }
+            }
+        });
+    }
 }
 
 // Initialize
