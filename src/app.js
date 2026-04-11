@@ -3033,6 +3033,24 @@ function initReportFilters() {
     document.getElementById('btn-generate-report')?.addEventListener('click', generateReport);
     document.getElementById('report-type-filter')?.addEventListener('change', updateReportVisibility);
     
+    // Set default date range to last 30 days if not already set
+    const dateStartInput = document.getElementById('global-date');
+    const dateEndInput = document.getElementById('global-date-end');
+    const viewModeSelect = document.getElementById('view-mode');
+
+    if (dateStartInput && dateEndInput && viewModeSelect && !dateEndInput.value) {
+        const end = new Date();
+        const start = new Date();
+        start.setDate(end.getDate() - 30);
+        
+        dateStartInput.value = start.toISOString().split('T')[0];
+        dateEndInput.value = end.toISOString().split('T')[0];
+        viewModeSelect.value = 'range';
+        
+        // Trigger UI updates for date range mode
+        viewModeSelect.dispatchEvent(new Event('change'));
+    }
+
     // Auto generate report on first load if not already generated
     if (document.getElementById('report-content').classList.contains('hidden')) {
         generateReport();
@@ -3121,10 +3139,20 @@ function processReportData(trafficData, oeeData, target, type, startDate, endDat
         'Gate 19': 'Tuyến 8'
     };
     
-    // Generate date range array
+    // Generate date range array (Last 30 days if not specified)
     const dates = [];
-    let curr = new Date(startDate);
-    const end = new Date(endDate);
+    let start, end;
+    
+    if (startDate && endDate) {
+        start = new Date(startDate);
+        end = new Date(endDate);
+    } else {
+        end = new Date();
+        start = new Date();
+        start.setDate(end.getDate() - 30);
+    }
+    
+    let curr = new Date(start);
     while (curr <= end) {
         dates.push(curr.toISOString().split('T')[0]);
         curr.setDate(curr.getDate() + 1);
@@ -3133,20 +3161,27 @@ function processReportData(trafficData, oeeData, target, type, startDate, endDat
     const reportRows = [];
     let totalTraffic = 0;
     let totalOeeSum = 0;
+    let totalOeeIdealSum = 0;
     let oeeCount = 0;
     let maxTraffic = 0;
     let maxTrafficDate = '-';
 
     const chartLabels = [];
     const chartTraffic = [];
-    const chartOee = [];
+    const chartOeeActual = [];
+    const chartOeeIdeal = [];
+
+    const specificCables = ['1', '3', '4', '6', '8'];
+    const specificOeeData = { '1': [], '3': [], '4': [], '6': [], '8': [] };
 
     dates.forEach(date => {
-        chartLabels.push(date);
+        const dateParts = date.split('-');
+        chartLabels.push(`${dateParts[2]}/${dateParts[1]}`);
         
         // Filter traffic for this date and target
         let dayTraffic = 0;
-        let dayCapacity = 0;
+        let dayCapacityActual = 0;
+        let dayCapacityIdeal = 0;
         
         const dayTrafficData = trafficData.filter(d => d.date === date);
         dayTrafficData.forEach(gate => {
@@ -3160,46 +3195,61 @@ function processReportData(trafficData, oeeData, target, type, startDate, endDat
         });
 
         // Filter OEE for this date and target
-        let dayOeeSum = 0;
+        let dayOeeActualSum = 0;
+        let dayOeeIdealSum = 0;
         let dayOeeCount = 0;
-        let dayA = 0, dayP = 0, dayQ = 0;
         
         const ops = oeeData[date];
         if (ops) {
             cableConfigs.forEach(cable => {
+                const op = ops[cable.id];
+                if (op && op.oee && specificCables.includes(cable.id)) {
+                    specificOeeData[cable.id].push(op.oee);
+                }
+
                 if (target === 'all' || target === `cable_${cable.id}` || 
                    (target.startsWith('gate_') && GATE_TO_CABLE_MAP[target.replace('gate_', '')] === cable.name)) {
                     
-                    const op = ops[cable.id];
                     if (op && op.oee) {
-                        dayOeeSum += op.oee;
-                        dayA += op.availability || 0;
-                        dayP += op.performance || 0;
-                        dayQ += op.quality || 0;
+                        dayOeeActualSum += op.oee;
                         dayOeeCount++;
                         
-                        // Calculate capacity based on segments
+                        // Calculate capacities
+                        let cableCapActual = 0;
+                        let cableCapIdeal = 0;
+                        
                         if (op.segments) {
                             op.segments.forEach(seg => {
                                 const startHour = parseInt(seg.start.split(':')[0]);
                                 const endHour = parseInt(seg.end.split(':')[0]);
-                                const hours = endHour - startHour;
-                                const ratio = (seg.cabins / cable.maxCabins) * (seg.speed / cable.maxSpeed);
-                                dayCapacity += (cable.maxCapacity * ratio * hours) / 2;
+                                const hoursCount = endHour - startHour;
+                                if (hoursCount > 0) {
+                                    const ratio = (seg.cabins / cable.maxCabins) * (seg.speed / cable.maxSpeed);
+                                    cableCapActual += (cable.maxCapacity * ratio * hoursCount) / 2;
+                                    cableCapIdeal += (cable.maxCapacity * hoursCount) / 2;
+                                }
                             });
                         }
+                        
+                        dayCapacityActual += cableCapActual;
+                        dayCapacityIdeal += cableCapIdeal;
+                        
+                        // Calculate Ideal OEE for this cable on this day
+                        // Ideal OEE = Actual Traffic / Ideal Capacity
+                        // Since we don't have per-cable traffic easily here, we use the ratio of capacities
+                        const idealOee = cableCapIdeal > 0 ? (op.oee * cableCapActual / cableCapIdeal) : 0;
+                        dayOeeIdealSum += idealOee;
                     }
                 }
             });
         }
 
-        const avgOee = dayOeeCount > 0 ? dayOeeSum / dayOeeCount : 0;
-        const avgA = dayOeeCount > 0 ? dayA / dayOeeCount : 0;
-        const avgP = dayOeeCount > 0 ? dayP / dayOeeCount : 0;
-        const avgQ = dayOeeCount > 0 ? dayQ / dayOeeCount : 0;
+        const avgOeeActual = dayOeeCount > 0 ? dayOeeActualSum / dayOeeCount : 0;
+        const avgOeeIdeal = dayOeeCount > 0 ? dayOeeIdealSum / dayOeeCount : 0;
 
         chartTraffic.push(dayTraffic);
-        chartOee.push(avgOee);
+        chartOeeActual.push(avgOeeActual);
+        chartOeeIdeal.push(avgOeeIdeal);
 
         totalTraffic += dayTraffic;
         if (dayTraffic > maxTraffic) {
@@ -3207,23 +3257,22 @@ function processReportData(trafficData, oeeData, target, type, startDate, endDat
             maxTrafficDate = date;
         }
         
-        if (avgOee > 0) {
-            totalOeeSum += avgOee;
+        if (avgOeeActual > 0) {
+            totalOeeSum += avgOeeActual;
+            totalOeeIdealSum += avgOeeIdeal;
             oeeCount++;
         }
 
         // Add to table
-        if (dayTraffic > 0 || avgOee > 0) {
+        if (dayTraffic > 0 || avgOeeActual > 0) {
             reportRows.push(`
                 <tr class="hover:bg-slate-50 transition-colors">
                     <td class="p-4 border-b border-slate-100 font-medium text-slate-800">${date}</td>
                     <td class="p-4 border-b border-slate-100 text-slate-500">${target === 'all' ? 'Tất cả' : target.replace('gate_', 'Nhà ga ').replace('cable_', 'Tuyến ')}</td>
                     <td class="p-4 border-b border-slate-100 text-right font-bold text-indigo-600">${dayTraffic.toLocaleString('vi-VN')}</td>
-                    <td class="p-4 border-b border-slate-100 text-right text-slate-500">${dayCapacity > 0 ? Math.round(dayCapacity).toLocaleString('vi-VN') : '-'}</td>
-                    <td class="p-4 border-b border-slate-100 text-right font-bold ${avgOee >= 85 ? 'text-emerald-600' : (avgOee >= 75 ? 'text-amber-600' : 'text-rose-600')}">${avgOee > 0 ? avgOee.toFixed(1) + '%' : '-'}</td>
-                    <td class="p-4 border-b border-slate-100 text-right text-slate-500">${avgA > 0 ? avgA.toFixed(1) + '%' : '-'}</td>
-                    <td class="p-4 border-b border-slate-100 text-right text-slate-500">${avgP > 0 ? avgP.toFixed(1) + '%' : '-'}</td>
-                    <td class="p-4 border-b border-slate-100 text-right text-slate-500">${avgQ > 0 ? avgQ.toFixed(1) + '%' : '-'}</td>
+                    <td class="p-4 border-b border-slate-100 text-right text-slate-500">${dayCapacityActual > 0 ? Math.round(dayCapacityActual).toLocaleString('vi-VN') : '-'}</td>
+                    <td class="p-4 border-b border-slate-100 text-right font-bold ${avgOeeActual >= 85 ? 'text-emerald-600' : (avgOeeActual >= 75 ? 'text-amber-600' : 'text-rose-600')}">${avgOeeActual > 0 ? avgOeeActual.toFixed(1) + '%' : '-'}</td>
+                    <td class="p-4 border-b border-slate-100 text-right font-medium text-slate-600">${avgOeeIdeal > 0 ? avgOeeIdeal.toFixed(1) + '%' : '-'}</td>
                 </tr>
             `);
         }
@@ -3231,39 +3280,84 @@ function processReportData(trafficData, oeeData, target, type, startDate, endDat
 
     // Render Table
     const tbody = document.getElementById('report-table-body');
+    const thead = tbody.previousElementSibling;
+    if (thead) {
+        thead.innerHTML = `
+            <tr class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                <th class="p-4 text-left font-bold">Ngày</th>
+                <th class="p-4 text-left font-bold">Đối tượng</th>
+                <th class="p-4 text-right font-bold">Lượt khách</th>
+                <th class="p-4 text-right font-bold">CS Vận hành</th>
+                <th class="p-4 text-right font-bold">OEE Thực tế</th>
+                <th class="p-4 text-right font-bold">OEE Lý tưởng</th>
+            </tr>
+        `;
+    }
+
     if (reportRows.length > 0) {
         tbody.innerHTML = reportRows.join('');
     } else {
-        tbody.innerHTML = `<tr><td colspan="8" class="p-8 text-center text-slate-500 italic">Không có dữ liệu trong khoảng thời gian này</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-500 italic">Không có dữ liệu trong khoảng thời gian này</td></tr>`;
     }
 
     // Render KPIs
     const avgOeeOverall = oeeCount > 0 ? totalOeeSum / oeeCount : 0;
+    const avgOeeIdealOverall = oeeCount > 0 ? totalOeeIdealSum / oeeCount : 0;
+    
+    // Calculate specific cable averages
+    const specificAverages = {};
+    specificCables.forEach(id => {
+        const data = specificOeeData[id];
+        const avg = data.length > 0 ? data.reduce((a, b) => a + b, 0) / data.length : 0;
+        specificAverages[id] = avg;
+    });
+
     document.getElementById('report-kpis').innerHTML = `
         <div class="bg-indigo-50 rounded-xl p-4 border border-indigo-100">
             <p class="text-xs text-indigo-600 font-bold uppercase tracking-wider mb-1">Tổng lượt khách</p>
             <h4 class="text-2xl font-black text-indigo-900">${totalTraffic.toLocaleString('vi-VN')}</h4>
         </div>
         <div class="bg-emerald-50 rounded-xl p-4 border border-emerald-100">
-            <p class="text-xs text-emerald-600 font-bold uppercase tracking-wider mb-1">OEE Trung bình</p>
+            <p class="text-xs text-emerald-600 font-bold uppercase tracking-wider mb-1">OEE Thực tế TB</p>
             <h4 class="text-2xl font-black text-emerald-900">${avgOeeOverall.toFixed(1)}%</h4>
+        </div>
+        <div class="bg-blue-50 rounded-xl p-4 border border-blue-100">
+            <p class="text-xs text-blue-600 font-bold uppercase tracking-wider mb-1">OEE Lý tưởng TB</p>
+            <h4 class="text-2xl font-black text-blue-900">${avgOeeIdealOverall.toFixed(1)}%</h4>
         </div>
         <div class="bg-amber-50 rounded-xl p-4 border border-amber-100">
             <p class="text-xs text-amber-600 font-bold uppercase tracking-wider mb-1">Lưu lượng cao nhất</p>
             <h4 class="text-2xl font-black text-amber-900">${maxTraffic.toLocaleString('vi-VN')}</h4>
             <p class="text-xs text-amber-700 mt-1">Ngày: ${maxTrafficDate}</p>
         </div>
-        <div class="bg-blue-50 rounded-xl p-4 border border-blue-100">
-            <p class="text-xs text-blue-600 font-bold uppercase tracking-wider mb-1">Số ngày có dữ liệu</p>
-            <h4 class="text-2xl font-black text-blue-900">${reportRows.length}</h4>
-        </div>
     `;
 
+    // Add specific cable OEE section
+    const specificKpiHtml = `
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+            ${specificCables.map(id => {
+                const cable = cableConfigs.find(c => c.id === id);
+                const avg = specificAverages[id];
+                const name = cable ? cable.name : `Tuyến ${id}`;
+                return `
+                    <div class="bg-white rounded-xl p-3 border border-slate-100 shadow-sm text-center">
+                        <p class="text-[10px] text-slate-400 font-bold uppercase mb-1">${name}</p>
+                        <h5 class="text-lg font-black ${avg >= 85 ? 'text-emerald-600' : (avg >= 75 ? 'text-amber-600' : 'text-rose-600')}">${avg > 0 ? avg.toFixed(1) + '%' : '-'}</h5>
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
+    const specificContainer = document.getElementById('report-specific-cables-oee');
+    if (specificContainer) {
+        specificContainer.innerHTML = specificKpiHtml;
+    }
+
     // Render Charts
-    renderReportCharts(chartLabels, chartTraffic, chartOee);
+    renderReportCharts(chartLabels, chartTraffic, chartOeeActual, chartOeeIdeal);
 }
 
-function renderReportCharts(labels, trafficData, oeeData) {
+function renderReportCharts(labels, trafficData, oeeActualData, oeeIdealData) {
     // Traffic Chart
     const ctxTraffic = document.getElementById('report-traffic-chart').getContext('2d');
     if (window.reportTrafficChart) window.reportTrafficChart.destroy();
@@ -3282,7 +3376,9 @@ function renderReportCharts(labels, trafficData, oeeData) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
+            plugins: { 
+                legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 10 } } } 
+            },
             scales: {
                 x: { grid: { display: false } },
                 y: { beginAtZero: true, grid: { borderDash: [2, 4] } }
@@ -3298,20 +3394,34 @@ function renderReportCharts(labels, trafficData, oeeData) {
         type: 'line',
         data: {
             labels: labels,
-            datasets: [{
-                label: 'OEE (%)',
-                data: oeeData,
-                borderColor: '#10b981',
-                backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                borderWidth: 2,
-                fill: true,
-                tension: 0.4
-            }]
+            datasets: [
+                {
+                    label: 'OEE Thực tế (%)',
+                    data: oeeActualData,
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4
+                },
+                {
+                    label: 'OEE Lý tưởng (%)',
+                    data: oeeIdealData,
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'transparent',
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    tension: 0.4,
+                    fill: false
+                }
+            ]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
+            plugins: { 
+                legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 10 } } } 
+            },
             scales: {
                 x: { grid: { display: false } },
                 y: { beginAtZero: true, max: 100, grid: { borderDash: [2, 4] } }
