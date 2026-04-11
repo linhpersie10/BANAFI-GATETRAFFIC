@@ -81,10 +81,6 @@
                     <i class="fas fa-door-open w-5 text-center"></i>
                     <span>Chi tiết Nhà Ga</span>
                 </button>
-                <button onclick="switchTab('productivity')" id="nav-productivity" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-white transition-all text-left font-medium">
-                    <i class="fas fa-user-tie w-5 text-center"></i>
-                    <span>Báo cáo năng suất</span>
-                </button>
                 <button onclick="switchTab('data-entry')" id="nav-data-entry" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-white transition-all text-left font-medium">
                     <i class="fas fa-database w-5 text-center"></i>
                     <span>Quản lý Dữ liệu</span>
@@ -96,6 +92,10 @@
                 <button onclick="switchTab('cable-oee')" id="nav-cable-oee" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-white transition-all text-left font-medium">
                     <i class="fas fa-chart-line w-5 text-center"></i>
                     <span>Tính OEE Tuyến Cáp</span>
+                </button>
+                <button onclick="switchTab('productivity')" id="nav-productivity" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-white transition-all text-left font-medium">
+                    <i class="fas fa-user-tie w-5 text-center"></i>
+                    <span>KPI</span>
                 </button>
                 <button onclick="switchTab('user-management')" id="nav-user-management" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-white transition-all text-left font-medium hidden">
                     <i class="fas fa-users-cog w-5 text-center"></i>
@@ -591,6 +591,7 @@
                                     <th class="pb-3 font-medium">Tốc độ tối đa (m/s)</th>
                                     <th class="pb-3 font-medium">Tổng tải tối đa (khách/h)</th>
                                     <th class="pb-3 font-medium">Downtime định mức (phút)</th>
+                                    <th class="pb-3 font-medium">Trạng thái</th>
                                     <th class="pb-3 font-medium text-right">Thao tác</th>
                                 </tr>
                             </thead>
@@ -704,10 +705,6 @@
             <i class="fas fa-door-open text-lg"></i>
             <span class="text-[10px] font-medium">Nhà Ga</span>
         </button>
-        <button onclick="switchTab('productivity')" id="nav-mobile-productivity" class="flex-1 flex flex-col items-center gap-1 py-3 text-slate-400 hover:text-slate-600 transition-colors">
-            <i class="fas fa-user-tie text-lg"></i>
-            <span class="text-[10px] font-medium">Năng suất</span>
-        </button>
         <button onclick="switchTab('data-entry')" id="nav-mobile-data-entry" class="flex-1 flex flex-col items-center gap-1 py-3 text-slate-400 hover:text-slate-600 transition-colors">
             <i class="fas fa-database text-lg"></i>
             <span class="text-[10px] font-medium">Dữ liệu</span>
@@ -719,6 +716,10 @@
         <button onclick="switchTab('cable-oee')" id="nav-mobile-cable-oee" class="flex-1 flex flex-col items-center gap-1 py-3 text-slate-400 hover:text-slate-600 transition-colors">
             <i class="fas fa-chart-line text-lg"></i>
             <span class="text-[10px] font-medium">OEE</span>
+        </button>
+        <button onclick="switchTab('productivity')" id="nav-mobile-productivity" class="flex-1 flex flex-col items-center gap-1 py-3 text-slate-400 hover:text-slate-600 transition-colors">
+            <i class="fas fa-user-tie text-lg"></i>
+            <span class="text-[10px] font-medium">KPI</span>
         </button>
         <button onclick="switchTab('user-management')" id="nav-mobile-user-management" class="flex-1 flex flex-col items-center gap-1 py-3 text-slate-400 hover:text-slate-600 transition-colors hidden">
             <i class="fas fa-users-cog text-lg"></i>

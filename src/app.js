@@ -331,7 +331,7 @@ window.switchTab = function(tabId) {
         'dashboard': 'Tổng quan hệ thống',
         'reports': 'Báo cáo Traffic & OEE',
         'gate-details': 'Chi tiết Nhà Ga',
-        'productivity': 'Báo cáo năng suất nhân sự',
+        'productivity': 'Báo cáo KPI',
         'data-entry': 'Quản lý Dữ liệu',
         'cable-config': 'Cấu hình Tuyến Cáp',
         'cable-oee': 'Tính OEE Tuyến Cáp',
@@ -1125,31 +1125,31 @@ window.toggleUserRole = async function(uid, currentRole) {
     const newRole = currentRole === 'admin' ? 'user' : 'admin';
     const action = newRole === 'admin' ? "Cấp quyền Admin" : "Thu hồi quyền Admin";
     
-    if (!confirm(`Bạn có chắc chắn muốn ${action} cho người dùng này?`)) return;
-    
-    try {
-        await setDoc(doc(db, 'users', uid), { role: newRole }, { merge: true });
-        showNotification("Thành công", `Đã ${action.toLowerCase()}`, "success");
-        loadUserManagement();
-    } catch (error) {
-        console.error("Error toggling role:", error);
-        showNotification("Lỗi", "Không thể thay đổi quyền hạn", "error");
-    }
+    showConfirm('Xác nhận', `Bạn có chắc chắn muốn ${action} cho người dùng này?`, async () => {
+        try {
+            await setDoc(doc(db, 'users', uid), { role: newRole }, { merge: true });
+            showNotification("Thành công", `Đã ${action.toLowerCase()}`, "success");
+            loadUserManagement();
+        } catch (error) {
+            console.error("Error toggling role:", error);
+            showNotification("Lỗi", "Không thể thay đổi quyền hạn", "error");
+        }
+    });
 };
 
 window.deleteUserAccount = async function(uid) {
     if (userRole !== 'admin') return;
     
-    if (!confirm("Bạn có chắc chắn muốn xóa người dùng này khỏi hệ thống? Thao tác này không thể hoàn tác.")) return;
-    
-    try {
-        await deleteDoc(doc(db, 'users', uid));
-        showNotification("Thành công", "Đã xóa người dùng", "success");
-        loadUserManagement();
-    } catch (error) {
-        console.error("Error deleting user:", error);
-        showNotification("Lỗi", "Không thể xóa người dùng", "error");
-    }
+    showConfirm('Xác nhận xóa', "Bạn có chắc chắn muốn xóa người dùng này khỏi hệ thống? Thao tác này không thể hoàn tác.", async () => {
+        try {
+            await deleteDoc(doc(db, 'users', uid));
+            showNotification("Thành công", "Đã xóa người dùng", "success");
+            loadUserManagement();
+        } catch (error) {
+            console.error("Error deleting user:", error);
+            showNotification("Lỗi", "Không thể xóa người dùng", "error");
+        }
+    });
 };
 let dashboardChart = null;
 let gatePieChart = null;
@@ -1984,7 +1984,7 @@ function renderGateDetails(gateName) {
         'Gate 19': 'Tuyến 8'
     };
 
-    const cableConfigs = getCableConfigs();
+    const cableConfigs = getCableConfigs().filter(c => c.enabled !== false);
     const hasOEEData = currentDayCableOperations !== null;
     
     let capacityData = [];
@@ -1995,8 +1995,8 @@ function renderGateDetails(gateName) {
     if (hasOEEData) {
         // Actual Capacity (Priority)
         capacityLabel = 'Công suất vận hành (Thực tế)';
-        capacityColor = 'rgba(59, 130, 246, 0.5)';
-        capacityBorder = 'rgba(59, 130, 246, 0.8)';
+        capacityColor = 'rgba(253, 224, 71, 0.6)'; // Light yellow with 60% opacity
+        capacityBorder = 'rgba(234, 179, 8, 0.7)';
         capacityData = rawHours.map(hour => {
             const hourInt = parseInt(hour.split(':')[0]);
             let totalActual = 0;
@@ -2023,8 +2023,8 @@ function renderGateDetails(gateName) {
     } else {
         // Max Capacity (Fallback)
         capacityLabel = 'Công suất tối đa (Lý thuyết)';
-        capacityColor = 'rgba(100, 116, 139, 0.5)'; // Darker slate with 50% opacity
-        capacityBorder = 'rgba(100, 116, 139, 0.8)';
+        capacityColor = 'rgba(254, 240, 138, 0.6)'; // Even lighter yellow with 60% opacity
+        capacityBorder = 'rgba(234, 179, 8, 0.5)';
         capacityData = rawHours.map(hour => {
             const hourInt = parseInt(hour.split(':')[0]);
             let totalMax = 0;
@@ -2453,29 +2453,48 @@ document.querySelectorAll('input[name="taskforce"]').forEach(cb => {
 updateDownloadButtonVisibility();
 // --- CABLE CONFIG LOGIC ---
 const DEFAULT_CABLES = [
-    { id: '1', name: 'Tuyến 1', length: 1000, maxCabins: 50, maxSpeed: 5, maxCapacity: 2000, downtime: 0 },
-    { id: '2', name: 'Tuyến 2', length: 1200, maxCabins: 60, maxSpeed: 5, maxCapacity: 2500, downtime: 0 },
-    { id: '3', name: 'Tuyến 3', length: 1500, maxCabins: 70, maxSpeed: 6, maxCapacity: 3000, downtime: 0 },
-    { id: '4', name: 'Tuyến 4', length: 1100, maxCabins: 55, maxSpeed: 5, maxCapacity: 2200, downtime: 0 },
-    { id: '5', name: 'Tuyến 5', length: 1300, maxCabins: 65, maxSpeed: 6, maxCapacity: 2800, downtime: 0 },
-    { id: '6', name: 'Tuyến 6', length: 1400, maxCabins: 68, maxSpeed: 6, maxCapacity: 2900, downtime: 0 },
-    { id: '8', name: 'Tuyến 8', length: 1600, maxCabins: 75, maxSpeed: 7, maxCapacity: 3500, downtime: 0 },
-    { id: '9', name: 'Tuyến 9', length: 1700, maxCabins: 80, maxSpeed: 7, maxCapacity: 4000, downtime: 0 }
+    { id: '1', name: 'Tuyến 1', length: 1000, maxCabins: 50, maxSpeed: 5, maxCapacity: 2000, downtime: 0, enabled: true },
+    { id: '2', name: 'Tuyến 2', length: 1200, maxCabins: 60, maxSpeed: 5, maxCapacity: 2500, downtime: 0, enabled: true },
+    { id: '3', name: 'Tuyến 3', length: 1500, maxCabins: 70, maxSpeed: 6, maxCapacity: 3000, downtime: 0, enabled: true },
+    { id: '4', name: 'Tuyến 4', length: 1100, maxCabins: 55, maxSpeed: 5, maxCapacity: 2200, downtime: 0, enabled: true },
+    { id: '5', name: 'Tuyến 5', length: 1300, maxCabins: 65, maxSpeed: 6, maxCapacity: 2800, downtime: 0, enabled: true },
+    { id: '6', name: 'Tuyến 6', length: 1400, maxCabins: 68, maxSpeed: 6, maxCapacity: 2900, downtime: 0, enabled: true },
+    { id: '8', name: 'Tuyến 8', length: 1600, maxCabins: 75, maxSpeed: 7, maxCapacity: 3500, downtime: 0, enabled: true },
+    { id: '9', name: 'Tuyến 9', length: 1700, maxCabins: 80, maxSpeed: 7, maxCapacity: 4000, downtime: 0, enabled: true }
 ];
 
 let editingCableIndices = new Set();
 
 function getCableConfigs() {
     const stored = localStorage.getItem('cableConfigs');
-    if (stored) return JSON.parse(stored);
+    if (stored) {
+        const configs = JSON.parse(stored);
+        // Migration: Ensure enabled property exists
+        let modified = false;
+        configs.forEach(c => {
+            if (c.enabled === undefined) {
+                c.enabled = true;
+                modified = true;
+            }
+        });
+        if (modified) localStorage.setItem('cableConfigs', JSON.stringify(configs));
+        return configs;
+    }
     localStorage.setItem('cableConfigs', JSON.stringify(DEFAULT_CABLES));
     return DEFAULT_CABLES;
 }
+
+window.toggleCableStatus = function(index, isEnabled) {
+    const configs = getCableConfigs();
+    configs[index].enabled = isEnabled;
+    saveCableConfigs(configs);
+};
 
 function saveCableConfigs(configs) {
     localStorage.setItem('cableConfigs', JSON.stringify(configs));
     renderCableConfigs();
     renderOEECableList(); // Update OEE list when config changes
+    initReportFilters(); // Update report filters
 }
 
 function renderCableConfigs() {
@@ -2504,6 +2523,12 @@ function renderCableConfigs() {
             <td class="py-3"><input type="number" ${disabledAttr} class="${inputNumClass}" value="${cable.maxSpeed}" onchange="updateCableConfig(${index}, 'maxSpeed', this.value)"></td>
             <td class="py-3"><input type="number" ${disabledAttr} class="${inputNumClass}" value="${cable.maxCapacity}" onchange="updateCableConfig(${index}, 'maxCapacity', this.value)"></td>
             <td class="py-3"><input type="number" ${disabledAttr} class="${inputNumClass}" value="${cable.downtime || 0}" onchange="updateCableConfig(${index}, 'downtime', this.value)"></td>
+            <td class="py-3">
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" class="sr-only peer" ${cable.enabled !== false ? 'checked' : ''} onchange="toggleCableStatus(${index}, this.checked)">
+                    <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                </label>
+            </td>
             <td class="py-3 text-right whitespace-nowrap">
                 ${isEditing 
                     ? `<button onclick="saveCableRow(${index})" class="text-emerald-600 hover:text-emerald-700 p-1 mr-2" title="Lưu"><i class="fas fa-save"></i></button>`
@@ -2536,10 +2561,9 @@ window.saveCableRow = function(index) {
 };
 
 window.deleteCableConfig = function(index) {
-    if (confirm('Bạn có chắc chắn muốn xóa tuyến cáp này?')) {
+    showConfirm('Xác nhận xóa', 'Bạn có chắc chắn muốn xóa tuyến cáp này?', () => {
         const configs = getCableConfigs();
         configs.splice(index, 1);
-        editingCableIndices.delete(index);
         
         // Shift editing indices if necessary
         const newEditing = new Set();
@@ -2550,7 +2574,7 @@ window.deleteCableConfig = function(index) {
         editingCableIndices = newEditing;
         
         saveCableConfigs(configs);
-    }
+    });
 };
 
 document.getElementById('btn-add-cable')?.addEventListener('click', () => {
@@ -2658,7 +2682,7 @@ async function renderOEECableList() {
     const dateStr = document.getElementById('oee-date-picker')?.value;
     const savedData = await checkOEEConfigStatus(dateStr);
     
-    const configs = getCableConfigs();
+    const configs = getCableConfigs().filter(c => c.enabled !== false);
     container.innerHTML = '';
     
     configs.forEach((cable, cableIdx) => {
@@ -2737,7 +2761,7 @@ async function renderOEECableList() {
 }
 
 window.updateRowCapacity = function(cableIdx, segIdx) {
-    const configs = getCableConfigs();
+    const configs = getCableConfigs().filter(c => c.enabled !== false);
     const cable = configs[cableIdx];
     if (!cable) return;
 
@@ -2773,8 +2797,8 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
             actualData[data.gateName] = data;
         });
 
-        // 2. Lấy cấu hình tuyến cáp
-        const configs = getCableConfigs();
+        // 2. Lấy cấu hình tuyến cáp (chỉ những tuyến đang enable)
+        const configs = getCableConfigs().filter(c => c.enabled !== false);
         const activeCables = configs.filter((_, index) => document.getElementById(`oee-toggle-${index}`).checked);
         
         if (activeCables.length === 0) {
@@ -2994,7 +3018,7 @@ function initReportFilters() {
     targetFilter.appendChild(optGroupGate);
     
     // Add Cables
-    const cables = getCableConfigs();
+    const cables = getCableConfigs().filter(c => c.enabled !== false);
     const optGroupCable = document.createElement('optgroup');
     optGroupCable.label = 'Tuyến Cáp';
     cables.forEach(cable => {
@@ -3088,7 +3112,7 @@ async function generateReport() {
 }
 
 function processReportData(trafficData, oeeData, target, type, startDate, endDate) {
-    const cableConfigs = getCableConfigs();
+    const cableConfigs = getCableConfigs().filter(c => c.enabled !== false);
     const GATE_TO_CABLE_MAP = {
         'Gate 1': 'Tuyến 1',
         'Gate 5': 'Tuyến 3',
