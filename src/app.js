@@ -124,6 +124,7 @@ async function initFirebase() {
         const finalDate = await findLatestDate();
         
         document.getElementById('global-date').value = finalDate;
+        document.getElementById('global-date').dispatchEvent(new Event('change'));
         document.getElementById('upload-date').value = finalDate;
         
         // Sync OEE date picker
@@ -131,6 +132,7 @@ async function initFirebase() {
         if (oeeDatePicker) {
             oeeDatePicker.value = finalDate;
             oeeDatePicker.addEventListener('change', renderOEECableList);
+            oeeDatePicker.dispatchEvent(new Event('change'));
         }
 
         setupAuthListeners();
