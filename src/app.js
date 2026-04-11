@@ -329,15 +329,20 @@ window.switchTab = function(tabId) {
     // Update page title
     const titles = {
         'dashboard': 'Tổng quan hệ thống',
+        'reports': 'Báo cáo Traffic & OEE',
         'gate-details': 'Chi tiết Nhà Ga',
         'productivity': 'Báo cáo năng suất nhân sự',
         'data-entry': 'Quản lý Dữ liệu',
+        'cable-config': 'Cấu hình Tuyến Cáp',
+        'cable-oee': 'Tính OEE Tuyến Cáp',
         'user-management': 'Quản trị người dùng'
     };
     document.getElementById('page-title').textContent = titles[tabId] || 'Hệ thống BNC';
     
     if (tabId === 'user-management') {
         loadUserManagement();
+    } else if (tabId === 'reports') {
+        initReportFilters();
     }
     
     // Refresh charts if needed
@@ -345,6 +350,9 @@ window.switchTab = function(tabId) {
         dashboardChart.resize();
     } else if (tabId === 'gate-details' && gateLineChart) {
         gateLineChart.resize();
+    } else if (tabId === 'reports') {
+        if (window.reportTrafficChart) window.reportTrafficChart.resize();
+        if (window.reportOeeChart) window.reportOeeChart.resize();
     }
     
     updateDownloadButtonVisibility();
@@ -2960,6 +2968,332 @@ async function generateAISuggestions(oeeSummary, dateStr) {
         console.error("Lỗi gọi AI:", error);
         aiSuggestion.innerHTML = '<p class="text-rose-500 italic">Không thể kết nối với AI để lấy gợi ý. Vui lòng thử lại sau.</p>';
     }
+}
+
+// --- REPORT MODULE ---
+window.reportTrafficChart = null;
+window.reportOeeChart = null;
+
+function initReportFilters() {
+    const targetFilter = document.getElementById('report-target-filter');
+    if (!targetFilter) return;
+    
+    // Keep 'all' option
+    targetFilter.innerHTML = '<option value="all">Tất cả Nhà ga / Tuyến cáp</option>';
+    
+    // Add Gates
+    const gates = ['Gate 1', 'Gate 5', 'Gate 9', 'Gate 15', 'Gate 19'];
+    const optGroupGate = document.createElement('optgroup');
+    optGroupGate.label = 'Nhà Ga';
+    gates.forEach(gate => {
+        const opt = document.createElement('option');
+        opt.value = `gate_${gate}`;
+        opt.textContent = gate;
+        optGroupGate.appendChild(opt);
+    });
+    targetFilter.appendChild(optGroupGate);
+    
+    // Add Cables
+    const cables = getCableConfigs();
+    const optGroupCable = document.createElement('optgroup');
+    optGroupCable.label = 'Tuyến Cáp';
+    cables.forEach(cable => {
+        const opt = document.createElement('option');
+        opt.value = `cable_${cable.id}`;
+        opt.textContent = cable.name;
+        optGroupCable.appendChild(opt);
+    });
+    targetFilter.appendChild(optGroupCable);
+
+    // Event listeners
+    document.getElementById('btn-generate-report')?.addEventListener('click', generateReport);
+    document.getElementById('report-type-filter')?.addEventListener('change', updateReportVisibility);
+    
+    // Auto generate report on first load if not already generated
+    if (document.getElementById('report-content').classList.contains('hidden')) {
+        generateReport();
+    }
+}
+
+function updateReportVisibility() {
+    const type = document.getElementById('report-type-filter').value;
+    const trafficContainer = document.getElementById('report-traffic-chart-container');
+    const oeeContainer = document.getElementById('report-oee-chart-container');
+    
+    if (type === 'all') {
+        trafficContainer.classList.remove('hidden');
+        oeeContainer.classList.remove('hidden');
+        trafficContainer.parentElement.classList.replace('lg:grid-cols-1', 'lg:grid-cols-2');
+    } else if (type === 'traffic') {
+        trafficContainer.classList.remove('hidden');
+        oeeContainer.classList.add('hidden');
+        trafficContainer.parentElement.classList.replace('lg:grid-cols-2', 'lg:grid-cols-1');
+    } else if (type === 'oee') {
+        trafficContainer.classList.add('hidden');
+        oeeContainer.classList.remove('hidden');
+        trafficContainer.parentElement.classList.replace('lg:grid-cols-2', 'lg:grid-cols-1');
+    }
+    
+    if (window.reportTrafficChart) window.reportTrafficChart.resize();
+    if (window.reportOeeChart) window.reportOeeChart.resize();
+}
+
+async function generateReport() {
+    if (!db) return;
+    
+    const startDate = document.getElementById('global-date').value;
+    const endDate = document.getElementById('global-date-end').value || startDate;
+    const target = document.getElementById('report-target-filter').value;
+    const type = document.getElementById('report-type-filter').value;
+    
+    if (!startDate) {
+        showNotification('Lỗi', 'Vui lòng chọn ngày bắt đầu', 'error');
+        return;
+    }
+
+    showLoading(true, 'Đang tạo báo cáo...');
+    
+    try {
+        // Fetch Traffic Data
+        const qTraffic = query(collection(db, 'gate_statistics'), 
+                  where('date', '>=', startDate), 
+                  where('date', '<=', endDate),
+                  orderBy('date', 'asc'));
+        const trafficSnap = await getDocs(qTraffic);
+        const trafficData = [];
+        trafficSnap.forEach(doc => trafficData.push(doc.data()));
+
+        // Fetch OEE Data
+        const qOee = query(collection(db, 'cable_operations'), 
+                  where('date', '>=', startDate), 
+                  where('date', '<=', endDate),
+                  orderBy('date', 'asc'));
+        const oeeSnap = await getDocs(qOee);
+        const oeeData = {};
+        oeeSnap.forEach(doc => {
+            oeeData[doc.data().date] = doc.data().cableData;
+        });
+
+        processReportData(trafficData, oeeData, target, type, startDate, endDate);
+        
+        document.getElementById('report-content').classList.remove('hidden');
+        updateReportVisibility();
+        
+    } catch (error) {
+        console.error("Lỗi tạo báo cáo:", error);
+        showNotification('Lỗi', 'Không thể tạo báo cáo', 'error');
+    } finally {
+        showLoading(false);
+    }
+}
+
+function processReportData(trafficData, oeeData, target, type, startDate, endDate) {
+    const cableConfigs = getCableConfigs();
+    const GATE_TO_CABLE_MAP = {
+        'Gate 1': 'Tuyến 1',
+        'Gate 5': 'Tuyến 3',
+        'Gate 9': 'Tuyến 4',
+        'Gate 15': 'Tuyến 6',
+        'Gate 19': 'Tuyến 8'
+    };
+    
+    // Generate date range array
+    const dates = [];
+    let curr = new Date(startDate);
+    const end = new Date(endDate);
+    while (curr <= end) {
+        dates.push(curr.toISOString().split('T')[0]);
+        curr.setDate(curr.getDate() + 1);
+    }
+
+    const reportRows = [];
+    let totalTraffic = 0;
+    let totalOeeSum = 0;
+    let oeeCount = 0;
+    let maxTraffic = 0;
+    let maxTrafficDate = '-';
+
+    const chartLabels = [];
+    const chartTraffic = [];
+    const chartOee = [];
+
+    dates.forEach(date => {
+        chartLabels.push(date);
+        
+        // Filter traffic for this date and target
+        let dayTraffic = 0;
+        let dayCapacity = 0;
+        
+        const dayTrafficData = trafficData.filter(d => d.date === date);
+        dayTrafficData.forEach(gate => {
+            if (target === 'all' || target === `gate_${gate.gateName}` || 
+               (target.startsWith('cable_') && GATE_TO_CABLE_MAP[gate.gateName] === cableConfigs.find(c => c.id === target.replace('cable_', ''))?.name)) {
+                
+                Object.values(gate.hourlyData).forEach(hour => {
+                    dayTraffic += Object.values(hour).reduce((sum, val) => sum + val, 0);
+                });
+            }
+        });
+
+        // Filter OEE for this date and target
+        let dayOeeSum = 0;
+        let dayOeeCount = 0;
+        let dayA = 0, dayP = 0, dayQ = 0;
+        
+        const ops = oeeData[date];
+        if (ops) {
+            cableConfigs.forEach(cable => {
+                if (target === 'all' || target === `cable_${cable.id}` || 
+                   (target.startsWith('gate_') && GATE_TO_CABLE_MAP[target.replace('gate_', '')] === cable.name)) {
+                    
+                    const op = ops[cable.id];
+                    if (op && op.oee) {
+                        dayOeeSum += op.oee;
+                        dayA += op.availability || 0;
+                        dayP += op.performance || 0;
+                        dayQ += op.quality || 0;
+                        dayOeeCount++;
+                        
+                        // Calculate capacity based on segments
+                        if (op.segments) {
+                            op.segments.forEach(seg => {
+                                const startHour = parseInt(seg.start.split(':')[0]);
+                                const endHour = parseInt(seg.end.split(':')[0]);
+                                const hours = endHour - startHour;
+                                const ratio = (seg.cabins / cable.maxCabins) * (seg.speed / cable.maxSpeed);
+                                dayCapacity += (cable.maxCapacity * ratio * hours) / 2;
+                            });
+                        }
+                    }
+                }
+            });
+        }
+
+        const avgOee = dayOeeCount > 0 ? dayOeeSum / dayOeeCount : 0;
+        const avgA = dayOeeCount > 0 ? dayA / dayOeeCount : 0;
+        const avgP = dayOeeCount > 0 ? dayP / dayOeeCount : 0;
+        const avgQ = dayOeeCount > 0 ? dayQ / dayOeeCount : 0;
+
+        chartTraffic.push(dayTraffic);
+        chartOee.push(avgOee);
+
+        totalTraffic += dayTraffic;
+        if (dayTraffic > maxTraffic) {
+            maxTraffic = dayTraffic;
+            maxTrafficDate = date;
+        }
+        
+        if (avgOee > 0) {
+            totalOeeSum += avgOee;
+            oeeCount++;
+        }
+
+        // Add to table
+        if (dayTraffic > 0 || avgOee > 0) {
+            reportRows.push(`
+                <tr class="hover:bg-slate-50 transition-colors">
+                    <td class="p-4 border-b border-slate-100 font-medium text-slate-800">${date}</td>
+                    <td class="p-4 border-b border-slate-100 text-slate-500">${target === 'all' ? 'Tất cả' : target.replace('gate_', 'Nhà ga ').replace('cable_', 'Tuyến ')}</td>
+                    <td class="p-4 border-b border-slate-100 text-right font-bold text-indigo-600">${dayTraffic.toLocaleString('vi-VN')}</td>
+                    <td class="p-4 border-b border-slate-100 text-right text-slate-500">${dayCapacity > 0 ? Math.round(dayCapacity).toLocaleString('vi-VN') : '-'}</td>
+                    <td class="p-4 border-b border-slate-100 text-right font-bold ${avgOee >= 85 ? 'text-emerald-600' : (avgOee >= 75 ? 'text-amber-600' : 'text-rose-600')}">${avgOee > 0 ? avgOee.toFixed(1) + '%' : '-'}</td>
+                    <td class="p-4 border-b border-slate-100 text-right text-slate-500">${avgA > 0 ? avgA.toFixed(1) + '%' : '-'}</td>
+                    <td class="p-4 border-b border-slate-100 text-right text-slate-500">${avgP > 0 ? avgP.toFixed(1) + '%' : '-'}</td>
+                    <td class="p-4 border-b border-slate-100 text-right text-slate-500">${avgQ > 0 ? avgQ.toFixed(1) + '%' : '-'}</td>
+                </tr>
+            `);
+        }
+    });
+
+    // Render Table
+    const tbody = document.getElementById('report-table-body');
+    if (reportRows.length > 0) {
+        tbody.innerHTML = reportRows.join('');
+    } else {
+        tbody.innerHTML = `<tr><td colspan="8" class="p-8 text-center text-slate-500 italic">Không có dữ liệu trong khoảng thời gian này</td></tr>`;
+    }
+
+    // Render KPIs
+    const avgOeeOverall = oeeCount > 0 ? totalOeeSum / oeeCount : 0;
+    document.getElementById('report-kpis').innerHTML = `
+        <div class="bg-indigo-50 rounded-xl p-4 border border-indigo-100">
+            <p class="text-xs text-indigo-600 font-bold uppercase tracking-wider mb-1">Tổng lượt khách</p>
+            <h4 class="text-2xl font-black text-indigo-900">${totalTraffic.toLocaleString('vi-VN')}</h4>
+        </div>
+        <div class="bg-emerald-50 rounded-xl p-4 border border-emerald-100">
+            <p class="text-xs text-emerald-600 font-bold uppercase tracking-wider mb-1">OEE Trung bình</p>
+            <h4 class="text-2xl font-black text-emerald-900">${avgOeeOverall.toFixed(1)}%</h4>
+        </div>
+        <div class="bg-amber-50 rounded-xl p-4 border border-amber-100">
+            <p class="text-xs text-amber-600 font-bold uppercase tracking-wider mb-1">Lưu lượng cao nhất</p>
+            <h4 class="text-2xl font-black text-amber-900">${maxTraffic.toLocaleString('vi-VN')}</h4>
+            <p class="text-xs text-amber-700 mt-1">Ngày: ${maxTrafficDate}</p>
+        </div>
+        <div class="bg-blue-50 rounded-xl p-4 border border-blue-100">
+            <p class="text-xs text-blue-600 font-bold uppercase tracking-wider mb-1">Số ngày có dữ liệu</p>
+            <h4 class="text-2xl font-black text-blue-900">${reportRows.length}</h4>
+        </div>
+    `;
+
+    // Render Charts
+    renderReportCharts(chartLabels, chartTraffic, chartOee);
+}
+
+function renderReportCharts(labels, trafficData, oeeData) {
+    // Traffic Chart
+    const ctxTraffic = document.getElementById('report-traffic-chart').getContext('2d');
+    if (window.reportTrafficChart) window.reportTrafficChart.destroy();
+    
+    window.reportTrafficChart = new Chart(ctxTraffic, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Lượt khách',
+                data: trafficData,
+                backgroundColor: 'rgba(79, 70, 229, 0.8)',
+                borderRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { display: false } },
+                y: { beginAtZero: true, grid: { borderDash: [2, 4] } }
+            }
+        }
+    });
+
+    // OEE Chart
+    const ctxOee = document.getElementById('report-oee-chart').getContext('2d');
+    if (window.reportOeeChart) window.reportOeeChart.destroy();
+    
+    window.reportOeeChart = new Chart(ctxOee, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'OEE (%)',
+                data: oeeData,
+                borderColor: '#10b981',
+                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { display: false } },
+                y: { beginAtZero: true, max: 100, grid: { borderDash: [2, 4] } }
+            }
+        }
+    });
 }
 
 // Initialize

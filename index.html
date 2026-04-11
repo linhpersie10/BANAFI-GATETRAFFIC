@@ -73,6 +73,10 @@
                     <i class="fas fa-chart-pie w-5 text-center"></i>
                     <span>Tổng quan</span>
                 </button>
+                <button onclick="switchTab('reports')" id="nav-reports" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-white transition-all text-left font-medium">
+                    <i class="fas fa-file-alt w-5 text-center"></i>
+                    <span>Báo cáo</span>
+                </button>
                 <button onclick="switchTab('gate-details')" id="nav-gate-details" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-800/80 hover:text-white transition-all text-left font-medium">
                     <i class="fas fa-door-open w-5 text-center"></i>
                     <span>Chi tiết Nhà Ga</span>
@@ -281,6 +285,86 @@
                             <div class="flex-1 w-full relative min-h-0">
                                 <canvas id="hour-pie-chart"></canvas>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: REPORTS -->
+            <div id="tab-reports" class="tab-content hidden space-y-6">
+                <!-- Report Filters -->
+                <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200/60">
+                    <h3 class="text-lg font-bold text-slate-800 mb-4">Bộ lọc Báo cáo</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div>
+                            <label class="block text-xs font-medium text-slate-500 mb-1">Loại báo cáo</label>
+                            <select id="report-type-filter" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+                                <option value="all">Tổng hợp (Traffic & OEE)</option>
+                                <option value="traffic">Lưu lượng khách (Traffic)</option>
+                                <option value="oee">Hiệu suất thiết bị (OEE)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-slate-500 mb-1">Nhà ga / Tuyến cáp</label>
+                            <select id="report-target-filter" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+                                <option value="all">Tất cả</option>
+                                <!-- Populated dynamically -->
+                            </select>
+                        </div>
+                        <div class="md:col-span-2 flex items-end">
+                            <button id="btn-generate-report" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-medium transition-colors w-full md:w-auto flex items-center justify-center gap-2">
+                                <i class="fas fa-file-alt"></i> Tạo báo cáo
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Report Content -->
+                <div id="report-content" class="hidden space-y-6">
+                    <!-- KPIs -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4" id="report-kpis">
+                        <!-- Dynamic KPIs -->
+                    </div>
+
+                    <!-- Charts -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200/60" id="report-traffic-chart-container">
+                            <h3 class="text-base font-bold text-slate-800 mb-4">Biểu đồ Lưu lượng</h3>
+                            <div class="h-64 relative">
+                                <canvas id="report-traffic-chart"></canvas>
+                            </div>
+                        </div>
+                        <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200/60" id="report-oee-chart-container">
+                            <h3 class="text-base font-bold text-slate-800 mb-4">Biểu đồ OEE</h3>
+                            <div class="h-64 relative">
+                                <canvas id="report-oee-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Data Table -->
+                    <div class="bg-white rounded-xl shadow-sm border border-slate-200/60 overflow-hidden">
+                        <div class="p-5 border-b border-slate-100 flex justify-between items-center">
+                            <h3 class="text-base font-bold text-slate-800">Chi tiết dữ liệu</h3>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse" id="report-data-table">
+                                <thead>
+                                    <tr class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                                        <th class="p-4 font-medium border-b border-slate-200">Thời gian</th>
+                                        <th class="p-4 font-medium border-b border-slate-200">Đối tượng</th>
+                                        <th class="p-4 font-medium border-b border-slate-200 text-right">Lượt khách</th>
+                                        <th class="p-4 font-medium border-b border-slate-200 text-right">Công suất</th>
+                                        <th class="p-4 font-medium border-b border-slate-200 text-right">OEE (%)</th>
+                                        <th class="p-4 font-medium border-b border-slate-200 text-right">A (%)</th>
+                                        <th class="p-4 font-medium border-b border-slate-200 text-right">P (%)</th>
+                                        <th class="p-4 font-medium border-b border-slate-200 text-right">Q (%)</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="text-sm text-slate-700 divide-y divide-slate-100" id="report-table-body">
+                                    <!-- Data rows -->
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
@@ -611,6 +695,10 @@
         <button onclick="switchTab('dashboard')" id="nav-mobile-dashboard" class="flex-1 flex flex-col items-center gap-1 py-3 text-blue-600 transition-colors">
             <i class="fas fa-chart-pie text-lg"></i>
             <span class="text-[10px] font-medium">Tổng quan</span>
+        </button>
+        <button onclick="switchTab('reports')" id="nav-mobile-reports" class="flex-1 flex flex-col items-center gap-1 py-3 text-slate-400 hover:text-slate-600 transition-colors">
+            <i class="fas fa-file-alt text-lg"></i>
+            <span class="text-[10px] font-medium">Báo cáo</span>
         </button>
         <button onclick="switchTab('gate-details')" id="nav-mobile-gate-details" class="flex-1 flex flex-col items-center gap-1 py-3 text-slate-400 hover:text-slate-600 transition-colors">
             <i class="fas fa-door-open text-lg"></i>
