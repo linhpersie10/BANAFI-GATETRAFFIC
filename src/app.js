@@ -128,7 +128,10 @@ async function initFirebase() {
         
         // Sync OEE date picker
         const oeeDatePicker = document.getElementById('oee-date-picker');
-        if (oeeDatePicker) oeeDatePicker.value = finalDate;
+        if (oeeDatePicker) {
+            oeeDatePicker.value = finalDate;
+            oeeDatePicker.addEventListener('change', renderOEECableList);
+        }
 
         setupAuthListeners();
         renderOEECableList();
@@ -994,7 +997,29 @@ async function uploadToFirestore(aggregatedData, targetDate) {
     }
 }
 
-// --- USER MANAGEMENT LOGIC ---
+window.refreshToLatestDate = async function() {
+    showLoading(true, 'Đang tải dữ liệu mới nhất...');
+    try {
+        const finalDate = await findLatestDate();
+        
+        // Update all date pickers and trigger change
+        const datePickers = ['global-date', 'upload-date', 'oee-date-picker'];
+        datePickers.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.value = finalDate;
+                el.dispatchEvent(new Event('change'));
+            }
+        });
+        
+        showNotification("Thành công", "Đã cập nhật đến ngày mới nhất: " + finalDate, "success");
+    } catch (error) {
+        console.error("Lỗi cập nhật ngày mới nhất:", error);
+        showNotification("Lỗi", "Không thể cập nhật ngày mới nhất", "error");
+    } finally {
+        showLoading(false);
+    }
+};
 async function loadUserManagement() {
     if (userRole !== 'admin') return;
     
