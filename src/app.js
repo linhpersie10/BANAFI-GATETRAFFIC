@@ -137,6 +137,9 @@ async function initFirebase() {
 
         setupAuthListeners();
         renderOEECableList();
+        
+        // Ensure auth section is visible
+        document.getElementById('auth-section')?.parentElement?.classList.remove('hidden');
     } catch (error) {
         console.error("Lỗi khởi tạo Firebase:", error);
         showNotification("Lỗi hệ thống", "Không thể kết nối đến cơ sở dữ liệu. Vui lòng kiểm tra cấu hình.", "error");
