@@ -1355,7 +1355,7 @@ async function loadDashboardData(dateStr, endDateStr = null) {
             const errInfo = {
                 error: error.message,
                 operationType: 'get',
-                path: 'gate_statistics',
+                path: 'gate_statistics_or_cable_operations',
                 authInfo: { userId: currentUser?.uid }
             };
             console.error('Firestore Error: ', JSON.stringify(errInfo));

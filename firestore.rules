@@ -83,12 +83,12 @@ service cloud.firestore {
     }
 
     match /cable_operations/{date} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow create, update, delete: if isAdmin();
     }
 
     match /daily_summaries/{date} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow write: if isAdmin();
     }
 
