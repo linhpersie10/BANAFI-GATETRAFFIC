@@ -162,8 +162,22 @@ async function initFirebase() {
         // Luôn lấy ngày có dữ liệu gần nhất trong DB cho lần tải đầu tiên
         const finalDate = await findLatestDate();
         
-        document.getElementById('global-date').value = finalDate;
-        document.getElementById('global-date').dispatchEvent(new Event('change'));
+        // Reset view mode and dates to ensure consistency on load
+        const viewMode = document.getElementById('view-mode');
+        if (viewMode) {
+            viewMode.value = 'day';
+        }
+        
+        const globalDateEnd = document.getElementById('global-date-end');
+        if (globalDateEnd) globalDateEnd.value = '';
+
+        const globalDate = document.getElementById('global-date');
+        if (globalDate) {
+            globalDate.value = finalDate;
+            // Trigger change event to load data
+            globalDate.dispatchEvent(new Event('change'));
+        }
+        
         document.getElementById('upload-date').value = finalDate;
         
         // Sync OEE date picker
@@ -171,7 +185,8 @@ async function initFirebase() {
         if (oeeDatePicker) {
             oeeDatePicker.value = finalDate;
             oeeDatePicker.addEventListener('change', renderOEECableList);
-            oeeDatePicker.dispatchEvent(new Event('change'));
+            // We don't need to dispatch change here if we call renderOEECableList manually or if it's handled by loadDashboardData
+            renderOEECableList();
         }
 
         setupAuthListeners();
@@ -352,6 +367,9 @@ window.switchTab = function(tabId) {
         loadUserManagement();
     } else if (tabId === 'reports') {
         initReportFilters();
+    } else if (tabId === 'gate-details') {
+        const selectedGate = document.getElementById('gate-selector')?.value || "";
+        renderGateDetails(selectedGate);
     }
     
     // Refresh charts if needed
@@ -1371,12 +1389,6 @@ async function loadDashboardData(dateStr, endDateStr = null) {
             updateDashboardUI();
             updateGateSelector();
             
-            // Nếu đang ở tab Chi tiết nhà ga, cập nhật luôn
-            const selectedGate = document.getElementById('gate-selector').value;
-            if (selectedGate) {
-                renderGateDetails(selectedGate);
-            }
-
             showLoading(false);
         } catch (error) {
             console.error("Lỗi tải dữ liệu:", error);
@@ -1903,10 +1915,22 @@ function updateGateSelector() {
     });
 
     // Tự động chọn "Tất cả nhà ga" (giá trị rỗng) làm mặc định nếu chưa chọn gì
-    if (gateNames.length > 0 && !selector.value) {
+    if (!selector.value) {
         selector.value = "";
-        renderGateDetails("");
     }
+    renderGateDetails(selector.value);
+}
+
+function clearGateDetails() {
+    if (gateLineChart) {
+        gateLineChart.destroy();
+        gateLineChart = null;
+    }
+    const ticketTableBody = document.getElementById('ticket-table-body');
+    if (ticketTableBody) ticketTableBody.innerHTML = '<tr><td colspan="2" class="px-4 py-3 text-center text-slate-500">Chưa có dữ liệu</td></tr>';
+    
+    const laneTableBody = document.getElementById('lane-table-body');
+    if (laneTableBody) laneTableBody.innerHTML = '<tr><td colspan="3" class="px-4 py-3 text-center text-slate-500">Chưa có dữ liệu</td></tr>';
 }
 
 document.getElementById('gate-selector').addEventListener('change', (e) => {
@@ -1915,7 +1939,10 @@ document.getElementById('gate-selector').addEventListener('change', (e) => {
 });
 
 function renderGateDetails(gateName) {
-    if (currentGlobalData.length === 0) return;
+    if (currentGlobalData.length === 0) {
+        clearGateDetails();
+        return;
+    }
 
     let dataToProcess = [];
     let chartLabel = '';
@@ -1927,12 +1954,18 @@ function renderGateDetails(gateName) {
     } else {
         // Chỉ lấy nhà ga được chọn (tất cả các ngày của nhà ga đó)
         dataToProcess = currentGlobalData.filter(d => d.gateName === gateName);
-        if (dataToProcess.length === 0) return;
+        if (dataToProcess.length === 0) {
+            clearGateDetails();
+            return;
+        }
         chartLabel = `Lưu lượng khách - ${gateName}`;
     }
 
     // 1. Vẽ Line Chart
-    const ctx = document.getElementById('gate-line-chart').getContext('2d');
+    const canvas = document.getElementById('gate-line-chart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
     if (gateLineChart) gateLineChart.destroy();
 
     // Lấy tất cả các khung giờ từ toàn bộ dữ liệu để đồng bộ với dashboard
