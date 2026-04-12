@@ -69,9 +69,10 @@ function updateAuthUI() {
         document.getElementById('btn-add-cable')?.classList.toggle('hidden', !isAdmin);
         document.getElementById('cable-config-action-header')?.classList.toggle('hidden', !isAdmin);
 
-        // Show OEE Save button
+        // Show OEE Save & Delete buttons
         document.getElementById('btn-save-oee-config')?.classList.remove('hidden');
-
+        // Delete button visibility is handled by checkOEEConfigStatus, but we ensure it's not globally hidden by auth
+        
         // Show auth section if hidden
         document.getElementById('auth-section')?.parentElement?.classList.remove('hidden');
     } else {
@@ -92,8 +93,9 @@ function updateAuthUI() {
         document.getElementById('btn-add-cable')?.classList.add('hidden');
         document.getElementById('cable-config-action-header')?.classList.add('hidden');
 
-        // Hide OEE Save button
+        // Hide OEE Save & Delete buttons
         document.getElementById('btn-save-oee-config')?.classList.add('hidden');
+        document.getElementById('btn-delete-oee-config')?.classList.add('hidden');
 
         // Redirect if on restricted tab
         const restrictedTabIds = ['data-entry', 'cable-config', 'user-management'];
@@ -2660,7 +2662,12 @@ async function checkOEEConfigStatus(date) {
     statusBadge.classList.remove('hidden', 'bg-emerald-100', 'text-emerald-700', 'bg-amber-100', 'text-amber-700');
     statusBadge.classList.add('hidden');
 
-    if (!db || !date) return null;
+    const deleteBtn = document.getElementById('btn-delete-oee-config');
+
+    if (!db || !date) {
+        if (deleteBtn) deleteBtn.classList.add('hidden');
+        return null;
+    }
 
     try {
         const docRef = doc(db, 'cable_operations', date);
@@ -2670,10 +2677,12 @@ async function checkOEEConfigStatus(date) {
         if (docSnap.exists()) {
             statusBadge.textContent = 'Đã có dữ liệu';
             statusBadge.classList.add('bg-emerald-100', 'text-emerald-700');
+            if (deleteBtn) deleteBtn.classList.remove('hidden');
             return docSnap.data().cableData;
         } else {
             statusBadge.textContent = 'Chưa có dữ liệu';
             statusBadge.classList.add('bg-amber-100', 'text-amber-700');
+            if (deleteBtn) deleteBtn.classList.add('hidden');
             return null;
         }
     } catch (error) {
@@ -2732,6 +2741,13 @@ async function saveOEEConfig() {
             updatedAt: new Date().toISOString()
         });
 
+        // Clear cache since data changed
+        const cacheKey = `oee_result_${dateStr}`;
+        localStorage.removeItem(cacheKey);
+        document.getElementById('oee-results-container')?.classList.add('hidden');
+        const aiSuggestion = document.getElementById('ai-suggestion-content');
+        if (aiSuggestion) aiSuggestion.innerHTML = '<p class="italic text-slate-500">Vui lòng chọn ngày và tính toán OEE để xem gợi ý từ AI.</p>';
+
         showNotification('Thành công', `Đã lưu dữ liệu vận hành cho ngày ${dateStr}`, 'success');
         checkOEEConfigStatus(dateStr);
     } catch (error) {
@@ -2748,6 +2764,35 @@ async function renderOEECableList() {
     
     const dateStr = document.getElementById('oee-date-picker')?.value;
     const savedData = await checkOEEConfigStatus(dateStr);
+    
+    // Check cache
+    const resultsContainer = document.getElementById('oee-results-container');
+    const aiSuggestion = document.getElementById('ai-suggestion-content');
+    if (dateStr) {
+        const cacheKey = `oee_result_${dateStr}`;
+        const cachedData = localStorage.getItem(cacheKey);
+        if (cachedData) {
+            try {
+                const parsed = JSON.parse(cachedData);
+                if (resultsContainer && parsed.tableHtml) {
+                    resultsContainer.innerHTML = parsed.tableHtml;
+                    resultsContainer.classList.remove('hidden');
+                }
+                if (aiSuggestion && parsed.aiHtml) {
+                    aiSuggestion.innerHTML = parsed.aiHtml;
+                }
+            } catch (e) {
+                console.error("Error parsing cached OEE data", e);
+                if (resultsContainer) resultsContainer.classList.add('hidden');
+            }
+        } else {
+            if (resultsContainer) resultsContainer.classList.add('hidden');
+            if (aiSuggestion) aiSuggestion.innerHTML = '<p class="italic text-slate-500">Vui lòng chọn ngày và tính toán OEE để xem gợi ý từ AI.</p>';
+        }
+    } else {
+        if (resultsContainer) resultsContainer.classList.add('hidden');
+        if (aiSuggestion) aiSuggestion.innerHTML = '<p class="italic text-slate-500">Vui lòng chọn ngày và tính toán OEE để xem gợi ý từ AI.</p>';
+    }
     
     const allConfigs = getCableConfigs();
     const configs = allConfigs.filter(c => c.enabled !== false);
@@ -3026,6 +3071,14 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
 
         // 3. Gọi AI Suggestion
         await generateAISuggestions(oeeSummary, dateStr);
+
+        // Save to cache
+        const cacheKey = `oee_result_${dateStr}`;
+        const cacheData = {
+            tableHtml: tableHtml,
+            aiHtml: document.getElementById('ai-suggestion-content').innerHTML
+        };
+        localStorage.setItem(cacheKey, JSON.stringify(cacheData));
 
         showNotification('Thành công', 'Đã tính toán OEE dựa trên dữ liệu thực tế', 'success');
     } catch (error) {
@@ -3545,6 +3598,37 @@ setTimeout(() => {
     renderCableConfigs();
 
     document.getElementById('btn-save-oee-config')?.addEventListener('click', saveOEEConfig);
+    
+    document.getElementById('btn-delete-oee-config')?.addEventListener('click', () => {
+        const dateStr = document.getElementById('oee-date-picker').value;
+        if (!dateStr) return;
+
+        showConfirm(
+            "Xác nhận xóa dữ liệu",
+            `Bạn có chắc chắn muốn xóa dữ liệu vận hành của ngày ${dateStr}?`,
+            async () => {
+                showLoading(true, 'Đang xóa dữ liệu...');
+                try {
+                    await deleteDoc(doc(db, 'cable_operations', dateStr));
+                    showNotification('Thành công', 'Đã xóa dữ liệu vận hành', 'success');
+                    
+                    // Clear cached OEE result
+                    const cacheKey = `oee_result_${dateStr}`;
+                    localStorage.removeItem(cacheKey);
+                    document.getElementById('oee-results-container').classList.add('hidden');
+                    document.getElementById('ai-suggestion-content').innerHTML = '<p class="italic text-slate-500">Vui lòng chọn ngày và tính toán OEE để xem gợi ý từ AI.</p>';
+                    
+                    renderOEECableList();
+                } catch (error) {
+                    console.error("Error deleting OEE config:", error);
+                    showNotification('Lỗi', 'Không thể xóa dữ liệu', 'error');
+                } finally {
+                    showLoading(false);
+                }
+            }
+        );
+    });
+
     document.getElementById('btn-generate-report')?.addEventListener('click', generateReport);
     document.getElementById('report-type-filter')?.addEventListener('change', updateReportVisibility);
 }, 500);
