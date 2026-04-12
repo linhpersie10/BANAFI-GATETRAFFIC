@@ -2539,6 +2539,7 @@ function getCableConfigs() {
 window.toggleCableStatus = function(index, isEnabled) {
     if (userRole !== 'admin') {
         showNotification('Lỗi', 'Chỉ Admin mới có quyền thay đổi cấu hình', 'error');
+        renderCableConfigs(); // Reset UI to reflect actual state
         return;
     }
     const configs = getCableConfigs();
@@ -2546,7 +2547,7 @@ window.toggleCableStatus = function(index, isEnabled) {
     saveCableConfigs(configs);
 };
 
-async function saveCableConfigs(configs) {
+async function saveCableConfigs(configs, skipRender = false) {
     cachedCableConfigs = configs;
     localStorage.setItem('cableConfigs', JSON.stringify(configs));
     
@@ -2558,14 +2559,21 @@ async function saveCableConfigs(configs) {
                 configs: configs,
                 updatedAt: new Date().toISOString()
             });
-            showNotification('Thành công', 'Đã lưu cấu hình lên hệ thống', 'success');
+            // Only show notification if not skipping render (manual save)
+            if (!skipRender) {
+                showNotification('Thành công', 'Đã lưu cấu hình lên hệ thống', 'success');
+            }
         } catch (error) {
             console.error("Error saving cable configs to Firestore:", error);
-            showNotification('Lỗi', 'Không thể lưu cấu hình lên hệ thống', 'error');
+            if (!skipRender) {
+                showNotification('Lỗi', 'Không thể lưu cấu hình lên hệ thống', 'error');
+            }
         }
     }
 
-    renderCableConfigs();
+    if (!skipRender) {
+        renderCableConfigs();
+    }
     renderOEECableList(); // Update OEE list when config changes
     initReportFilters(); // Update report filters
 }
@@ -2621,9 +2629,8 @@ window.updateCableConfig = function(index, field, value) {
     if (userRole !== 'admin') return;
     const configs = getCableConfigs();
     configs[index][field] = field === 'name' ? value : Number(value);
-    // Save to localStorage immediately but don't re-render to avoid losing focus
-    localStorage.setItem('cableConfigs', JSON.stringify(configs));
-    renderOEECableList();
+    // Save to localStorage and Firestore, skip re-render to keep focus
+    saveCableConfigs(configs, true);
 };
 
 window.editCableRow = function(index) {
