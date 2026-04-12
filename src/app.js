@@ -18,15 +18,24 @@ let cachedCableConfigs = null;
 
 async function loadCableConfigsFromFirestore() {
     if (!db) return;
+    console.log("Loading cable configs from Firestore...");
     try {
         const docRef = doc(db, 'app_settings', 'cable_configs');
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-            cachedCableConfigs = docSnap.data().configs;
-            localStorage.setItem('cableConfigs', JSON.stringify(cachedCableConfigs));
-            
-            // Re-render UI components that depend on cable configs
-            renderCableConfigs();
+            const data = docSnap.data();
+            if (data && data.configs) {
+                cachedCableConfigs = data.configs;
+                localStorage.setItem('cableConfigs', JSON.stringify(cachedCableConfigs));
+                console.log("Cable configs loaded from Firestore:", cachedCableConfigs.length, "items");
+                
+                // Re-render UI components that depend on cable configs
+                renderCableConfigs();
+                renderOEECableList();
+                initReportFilters();
+            }
+        } else {
+            console.log("No cable configs found in Firestore, using defaults/local.");
         }
     } catch (error) {
         console.error("Error loading cable configs from Firestore:", error);
@@ -71,6 +80,8 @@ function updateAuthUI() {
         
         // Re-render cable configs to ensure action buttons match auth state
         renderCableConfigs();
+        renderOEECableList();
+        initReportFilters();
 
         // Show OEE Save & Delete buttons
         document.getElementById('btn-save-oee-config')?.classList.remove('hidden');
@@ -98,6 +109,8 @@ function updateAuthUI() {
         
         // Re-render cable configs to ensure action buttons match auth state
         renderCableConfigs();
+        renderOEECableList();
+        initReportFilters();
 
         // Hide OEE Save & Delete buttons
         document.getElementById('btn-save-oee-config')?.classList.add('hidden');
@@ -3643,6 +3656,8 @@ function renderReportCharts(labels, trafficData, oeeActualData, oeeIdealData) {
 // Initialize
 setTimeout(() => {
     renderCableConfigs();
+    renderOEECableList();
+    initReportFilters();
 
     document.getElementById('btn-save-oee-config')?.addEventListener('click', saveOEEConfig);
     
