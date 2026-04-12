@@ -36,6 +36,11 @@ async function loadCableConfigsFromFirestore() {
             }
         } else {
             console.log("No cable configs found in Firestore, using defaults/local.");
+            // If admin, initialize Firestore with defaults if empty
+            if (userRole === 'admin') {
+                console.log("Initializing Firestore with default cable configs...");
+                await saveCableConfigs(getCableConfigs(), true);
+            }
         }
     } catch (error) {
         console.error("Error loading cable configs from Firestore:", error);
@@ -76,6 +81,7 @@ function updateAuthUI() {
 
         // Cable Config Admin UI
         document.getElementById('btn-add-cable')?.classList.toggle('hidden', !isAdmin);
+        document.getElementById('btn-save-all-cables')?.classList.toggle('hidden', !isAdmin);
         document.getElementById('cable-config-action-header')?.classList.toggle('hidden', !isAdmin);
         
         // Re-render cable configs to ensure action buttons match auth state
@@ -105,6 +111,7 @@ function updateAuthUI() {
 
         // Cable Config Admin UI
         document.getElementById('btn-add-cable')?.classList.add('hidden');
+        document.getElementById('btn-save-all-cables')?.classList.add('hidden');
         document.getElementById('cable-config-action-header')?.classList.add('hidden');
         
         // Re-render cable configs to ensure action buttons match auth state
@@ -3660,6 +3667,38 @@ setTimeout(() => {
     initReportFilters();
 
     document.getElementById('btn-save-oee-config')?.addEventListener('click', saveOEEConfig);
+    
+    document.getElementById('btn-export-cable-json')?.addEventListener('click', () => {
+        const configs = getCableConfigs();
+        const json = JSON.stringify(configs, null, 4);
+        console.log("CABLE_CONFIG_JSON:", json);
+        // We can't use alert/prompt easily in iframe, so we'll log to console and show a notification
+        showNotification('Thông tin', 'Cấu hình JSON đã được in ra Console. Bạn có thể sao chép từ đó.', 'info');
+        // Fallback: try to show in a simple way if possible, or just tell them to check console
+    });
+    
+    document.getElementById('btn-save-all-cables')?.addEventListener('click', () => {
+        if (userRole !== 'admin') {
+            showNotification('Lỗi', 'Chỉ Admin mới có quyền lưu cấu hình', 'error');
+            return;
+        }
+        showConfirm(
+            "Xác nhận lưu cấu hình",
+            "Bạn có chắc chắn muốn lưu toàn bộ cấu hình hiện tại lên hệ thống? Điều này sẽ ghi đè dữ liệu cũ.",
+            async () => {
+                showLoading(true, 'Đang lưu cấu hình...');
+                try {
+                    await saveCableConfigs(getCableConfigs());
+                    showNotification('Thành công', 'Đã đồng bộ toàn bộ cấu hình lên hệ thống', 'success');
+                } catch (error) {
+                    console.error("Error saving all configs:", error);
+                    showNotification('Lỗi', 'Không thể lưu cấu hình', 'error');
+                } finally {
+                    showLoading(false);
+                }
+            }
+        );
+    });
     
     document.getElementById('btn-delete-oee-config')?.addEventListener('click', () => {
         const dateStr = document.getElementById('oee-date-picker').value;

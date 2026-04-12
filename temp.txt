@@ -1,0 +1,151 @@
+        'dashboard': 'Tổng quan hệ thống',
+        'reports': 'Báo cáo Traffic & OEE',
+        'gate-details': 'Chi tiết Nhà Ga',
+        'productivity': 'Báo cáo KPI',
+        'data-entry': 'Quản lý Dữ liệu',
+        'cable-config': 'Cấu hình Tuyến Cáp',
+        'cable-oee': 'Tính OEE Tuyến Cáp',
+        'user-management': 'Quản trị người dùng'
+    };
+    document.getElementById('page-title').textContent = titles[tabId] || 'Hệ thống BNC';
+    
+    if (tabId === 'user-management') {
+--
+        }
+    ];
+
+    // --- CABLE CAPACITY BARS ---
+    const GATE_TO_CABLE_MAP = {
+        'Gate 1': 'Tuyến 1',
+        'Gate 5': 'Tuyến 3',
+        'Gate 9': 'Tuyến 4',
+        'Gate 15': 'Tuyến 6',
+        'Gate 19': 'Tuyến 8'
+    };
+
+    const cableConfigs = getCableConfigs().filter(c => c.enabled !== false);
+    const hasOEEData = currentDayCableOperations !== null;
+    
+--
+
+// Khởi chạy ứng dụng
+updateDownloadButtonVisibility();
+// --- CABLE CONFIG LOGIC ---
+const DEFAULT_CABLES = [
+    { id: '1', name: 'Tuyến 1', length: 1000, maxCabins: 50, maxSpeed: 5, maxCapacity: 2000, downtime: 0, enabled: true },
+    { id: '2', name: 'Tuyến 2', length: 1200, maxCabins: 60, maxSpeed: 5, maxCapacity: 2500, downtime: 0, enabled: true },
+    { id: '3', name: 'Tuyến 3', length: 1500, maxCabins: 70, maxSpeed: 6, maxCapacity: 3000, downtime: 0, enabled: true },
+    { id: '4', name: 'Tuyến 4', length: 1100, maxCabins: 55, maxSpeed: 5, maxCapacity: 2200, downtime: 0, enabled: true },
+    { id: '5', name: 'Tuyến 5', length: 1300, maxCabins: 65, maxSpeed: 6, maxCapacity: 2800, downtime: 0, enabled: true },
+    { id: '6', name: 'Tuyến 6', length: 1400, maxCabins: 68, maxSpeed: 6, maxCapacity: 2900, downtime: 0, enabled: true },
+    { id: '8', name: 'Tuyến 8', length: 1600, maxCabins: 75, maxSpeed: 7, maxCapacity: 3500, downtime: 0, enabled: true },
+    { id: '9', name: 'Tuyến 9', length: 1700, maxCabins: 80, maxSpeed: 7, maxCapacity: 4000, downtime: 0, enabled: true }
+];
+
+let editingCableIndices = new Set();
+
+function getCableConfigs() {
+--
+    }
+    const configs = getCableConfigs();
+    const newId = Date.now().toString();
+    configs.push({
+        id: newId,
+        name: 'Tuyến mới',
+        length: 1000,
+        maxCabins: 50,
+        maxSpeed: 5,
+        maxCapacity: 2000,
+        downtime: 0
+--
+                <h4 class="font-bold text-slate-800 mb-4">Kết quả OEE theo giờ - Ngày ${dateStr}</h4>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse min-w-[800px]">
+                        <thead>
+                            <tr class="border-b border-slate-200 text-sm text-slate-500">
+                                <th class="pb-3 font-medium sticky left-0 bg-white">Tuyến cáp</th>
+                                ${hours.map(h => `<th class="pb-3 font-medium text-center">${h}</th>`).join('')}
+                                <th class="pb-3 font-medium text-center text-indigo-600">TB Ngày</th>
+                            </tr>
+                        </thead>
+                        <tbody class="text-sm text-slate-700">
+--
+            // Find original index in configs to access correct DOM elements
+            const configIndex = allConfigs.findIndex(c => c.id === cable.id);
+            
+            // Map Cable Name to Gate Name based on user requirements
+            const CABLE_TO_GATE_MAP = {
+                'Tuyến 1': 'Gate 1',
+                'Tuyến 3': 'Gate 5',
+                'Tuyến 4': 'Gate 9',
+                'Tuyến 6': 'Gate 15',
+                'Tuyến 8': 'Gate 19'
+            };
+            const gateName = CABLE_TO_GATE_MAP[cable.name] || cable.name;
+            const gateData = actualData[gateName];
+            
+            // Lấy các segments từ UI
+--
+function initReportFilters() {
+    const targetFilter = document.getElementById('report-target-filter');
+    if (!targetFilter) return;
+    
+    // Keep 'all' option
+    targetFilter.innerHTML = '<option value="all">Tất cả Nhà ga / Tuyến cáp</option>';
+    
+    // Add Gates
+    const gates = ['Gate 1', 'Gate 5', 'Gate 9', 'Gate 15', 'Gate 19'];
+    const optGroupGate = document.createElement('optgroup');
+    optGroupGate.label = 'Nhà Ga';
+--
+    targetFilter.appendChild(optGroupGate);
+    
+    // Add Cables
+    const cables = getCableConfigs().filter(c => c.enabled !== false);
+    const optGroupCable = document.createElement('optgroup');
+    optGroupCable.label = 'Tuyến Cáp';
+    cables.forEach(cable => {
+        const opt = document.createElement('option');
+        opt.value = `cable_${cable.id}`;
+        opt.textContent = cable.name;
+        optGroupCable.appendChild(opt);
+--
+}
+
+function processReportData(trafficData, oeeData, target, type, startDate, endDate) {
+    const cableConfigs = getCableConfigs().filter(c => c.enabled !== false);
+    const GATE_TO_CABLE_MAP = {
+        'Gate 1': 'Tuyến 1',
+        'Gate 5': 'Tuyến 3',
+        'Gate 9': 'Tuyến 4',
+        'Gate 15': 'Tuyến 6',
+        'Gate 19': 'Tuyến 8'
+    };
+    
+    // Generate date range array (Last 30 days if not specified)
+    const dates = [];
+    let start, end;
+--
+        // Add to table
+        if (dayTraffic > 0 || avgOeeActual > 0) {
+            reportRows.push(`
+                <tr class="hover:bg-slate-50 transition-colors">
+                    <td class="p-4 border-b border-slate-100 font-medium text-slate-800">${date}</td>
+                    <td class="p-4 border-b border-slate-100 text-slate-500">${target === 'all' ? 'Tất cả' : target.replace('gate_', 'Nhà ga ').replace('cable_', 'Tuyến ')}</td>
+                    <td class="p-4 border-b border-slate-100 text-right font-bold text-indigo-600">${dayTraffic.toLocaleString('vi-VN')}</td>
+                    <td class="p-4 border-b border-slate-100 text-right text-slate-500">${dayCapacityActual > 0 ? Math.round(dayCapacityActual).toLocaleString('vi-VN') : '-'}</td>
+                    <td class="p-4 border-b border-slate-100 text-right font-bold ${avgOeeActual >= 85 ? 'text-emerald-600' : (avgOeeActual >= 75 ? 'text-amber-600' : 'text-rose-600')}">${avgOeeActual > 0 ? avgOeeActual.toFixed(1) + '%' : '-'}</td>
+                    <td class="p-4 border-b border-slate-100 text-right font-medium text-slate-600">${avgOeeIdeal > 0 ? avgOeeIdeal.toFixed(1) + '%' : '-'}</td>
+                </tr>
+--
+    const specificKpiHtml = `
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+            ${specificCables.map(id => {
+                const cable = cableConfigs.find(c => c.id === id);
+                const avg = specificAverages[id];
+                const name = cable ? cable.name : `Tuyến ${id}`;
+                return `
+                    <div class="bg-white rounded-xl p-3 border border-slate-100 shadow-sm text-center">
+                        <p class="text-[10px] text-slate-400 font-bold uppercase mb-1">${name}</p>
+                        <h5 class="text-lg font-black ${avg >= 85 ? 'text-emerald-600' : (avg >= 75 ? 'text-amber-600' : 'text-rose-600')}">${avg > 0 ? avg.toFixed(1) + '%' : '-'}</h5>
+                    </div>
