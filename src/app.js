@@ -68,6 +68,9 @@ function updateAuthUI() {
         // Cable Config Admin UI
         document.getElementById('btn-add-cable')?.classList.toggle('hidden', !isAdmin);
         document.getElementById('cable-config-action-header')?.classList.toggle('hidden', !isAdmin);
+        
+        // Re-render cable configs to ensure action buttons match auth state
+        renderCableConfigs();
 
         // Show OEE Save & Delete buttons
         document.getElementById('btn-save-oee-config')?.classList.remove('hidden');
@@ -92,6 +95,9 @@ function updateAuthUI() {
         // Cable Config Admin UI
         document.getElementById('btn-add-cable')?.classList.add('hidden');
         document.getElementById('cable-config-action-header')?.classList.add('hidden');
+        
+        // Re-render cable configs to ensure action buttons match auth state
+        renderCableConfigs();
 
         // Hide OEE Save & Delete buttons
         document.getElementById('btn-save-oee-config')?.classList.add('hidden');
@@ -2648,8 +2654,9 @@ window.saveCableRow = function(index) {
         return;
     }
     editingCableIndices.delete(index);
-    renderCableConfigs();
-    showNotification('Thành công', 'Đã lưu cấu hình tuyến cáp', 'success');
+    // Explicitly save to Firestore when clicking the save button
+    // saveCableConfigs will handle rendering and notification
+    saveCableConfigs(getCableConfigs());
 };
 
 window.deleteCableConfig = function(index) {
