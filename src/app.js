@@ -27,8 +27,6 @@ async function loadCableConfigsFromFirestore() {
             
             // Re-render UI components that depend on cable configs
             renderCableConfigs();
-            renderOEECableList();
-            initReportFilters();
         }
     } catch (error) {
         console.error("Error loading cable configs from Firestore:", error);
@@ -76,14 +74,6 @@ function updateAuthUI() {
 
         // Show auth section if hidden
         document.getElementById('auth-section')?.parentElement?.classList.remove('hidden');
-
-        // Tải dữ liệu dựa trên mode hiện tại
-        if (mode === 'week') {
-            if (typeof handleWeekChange === 'function') handleWeekChange();
-        } else if (currentDate) {
-            if (typeof loadDashboardData === 'function') loadDashboardData(currentDate);
-        }
-        if (uploadDate && typeof checkExistingData === 'function') checkExistingData(uploadDate);
     } else {
         if (userName) userName.textContent = 'Chưa đăng nhập';
         loginBtns.forEach(btn => btn?.classList.remove('hidden'));
@@ -111,16 +101,6 @@ function updateAuthUI() {
         if (restrictedTabIds.includes(currentTab)) {
             switchTab('dashboard');
         }
-
-        // Tải dữ liệu dựa trên mode hiện tại
-        if (mode === 'week') {
-            if (typeof handleWeekChange === 'function') handleWeekChange();
-        } else if (currentDate) {
-            if (typeof loadDashboardData === 'function') loadDashboardData(currentDate);
-        }
-        
-        // Cập nhật trạng thái upload
-        if (uploadDate && typeof checkExistingData === 'function') checkExistingData(uploadDate);
     }
     if (typeof checkUploadReadiness === 'function') checkUploadReadiness();
 }
@@ -193,7 +173,6 @@ async function initFirebase() {
         }
 
         setupAuthListeners();
-        renderOEECableList();
         
         // Ensure auth section is visible
         document.getElementById('auth-section')?.parentElement?.classList.remove('hidden');
@@ -276,41 +255,17 @@ function setupAuthListeners() {
         document.getElementById('mobile-logout-btn')
     ];
     const loginModal = document.getElementById('login-modal');
-    const loginIdInput = document.getElementById('login-id');
-    const loginPasswordInput = document.getElementById('login-password');
-    const submitLoginBtn = document.getElementById('submit-login-btn');
     const googleLoginBtn = document.getElementById('google-login-btn');
     const cancelLoginBtn = document.getElementById('cancel-login-btn');
-    const loginError = document.getElementById('login-error');
 
     loginBtns.forEach(btn => btn?.addEventListener('click', () => {
         loginModal.classList.remove('hidden');
-        loginIdInput.value = '';
-        loginPasswordInput.value = '';
-        loginError.classList.add('hidden');
-        loginIdInput.focus();
     }));
 
     cancelLoginBtn.addEventListener('click', () => {
         loginModal.classList.add('hidden');
     });
 
-    const handleLogin = () => {
-        const id = loginIdInput.value.trim();
-        const password = loginPasswordInput.value;
-        
-        if (id === 'admin' && password === '123456') {
-            currentUser = { uid: 'admin', displayName: 'Admin' };
-            localStorage.setItem('banafi_user', JSON.stringify(currentUser));
-            loginModal.classList.add('hidden');
-            updateAuthUI();
-        } else {
-            loginError.classList.remove('hidden');
-        }
-    };
-
-    submitLoginBtn.addEventListener('click', handleLogin);
-    
     if (googleLoginBtn) {
         googleLoginBtn.addEventListener('click', async () => {
             const provider = new GoogleAuthProvider();
@@ -326,10 +281,6 @@ function setupAuthListeners() {
             }
         });
     }
-
-    loginPasswordInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') handleLogin();
-    });
 
     logoutBtns.forEach(btn => btn?.addEventListener('click', async () => {
         try {
@@ -1212,9 +1163,11 @@ let gatePieChart = null;
 let hourPieChart = null;
 let gateLineChart = null;
 let currentGlobalData = []; // Lưu trữ dữ liệu của ngày đang chọn
+let currentGlobalDataRange = { start: null, end: null }; // Track the date range of currentGlobalData
 let comparisonGlobalData = []; // Lưu trữ dữ liệu của khung thời gian so sánh
 let currentDayCableOperations = null; // Lưu trữ cấu hình vận hành cáp treo của ngày đang chọn
 let dashboardIntervalMode = '1h'; // '1h' or '30m'
+let dashboardDataPromise = null; // Track ongoing data fetch
 
 // Bảng màu cố định để đảm bảo tính nhất quán giữa các ngày
 const GATE_COLORS = {
@@ -1343,98 +1296,102 @@ async function loadDashboardData(dateStr, endDateStr = null) {
     const requestId = ++lastRequestId;
     showLoading(true, 'Đang tải dữ liệu báo cáo...');
     
-    try {
-        // 1. Tải dữ liệu hiện tại
-        let q;
-        if (endDateStr && endDateStr !== dateStr) {
-            q = query(collection(db, 'gate_statistics'), 
-                      where('date', '>=', dateStr), 
-                      where('date', '<=', endDateStr),
-                      orderBy('date', 'asc'));
-        } else {
-            q = query(collection(db, 'gate_statistics'), where('date', '==', dateStr));
-        }
-        const snapshot = await getDocs(q);
-        
-        const newCurrentData = [];
-        snapshot.forEach(doc => {
-            newCurrentData.push(doc.data());
-        });
-
-        // 2. Tải dữ liệu so sánh (Hôm qua hoặc Tuần trước)
-        const mode = document.getElementById('view-mode').value;
-        let compStart = null;
-        let compEnd = null;
-
-        if (mode === 'day') {
-            const d = new Date(dateStr);
-            d.setDate(d.getDate() - 1);
-            compStart = d.toISOString().split('T')[0];
-            compEnd = compStart;
-        } else if (mode === 'week') {
-            const dStart = new Date(dateStr);
-            dStart.setDate(dStart.getDate() - 7);
-            compStart = dStart.toISOString().split('T')[0];
-            
-            const dEnd = new Date(endDateStr || dateStr);
-            dEnd.setDate(dEnd.getDate() - 7);
-            compEnd = dEnd.toISOString().split('T')[0];
-        }
-
-        const newComparisonData = [];
-        if (compStart) {
-            let qComp;
-            if (compEnd && compEnd !== compStart) {
-                qComp = query(collection(db, 'gate_statistics'), 
-                          where('date', '>=', compStart), 
-                          where('date', '<=', compEnd),
+    dashboardDataPromise = (async () => {
+        try {
+            // 1. Tải dữ liệu hiện tại
+            let q;
+            if (endDateStr && endDateStr !== dateStr) {
+                q = query(collection(db, 'gate_statistics'), 
+                          where('date', '>=', dateStr), 
+                          where('date', '<=', endDateStr),
                           orderBy('date', 'asc'));
             } else {
-                qComp = query(collection(db, 'gate_statistics'), where('date', '==', compStart));
+                q = query(collection(db, 'gate_statistics'), where('date', '==', dateStr));
             }
-            const compSnapshot = await getDocs(qComp);
-            compSnapshot.forEach(doc => {
-                newComparisonData.push(doc.data());
+            const snapshot = await getDocs(q);
+            
+            const newCurrentData = [];
+            snapshot.forEach(doc => {
+                newCurrentData.push(doc.data());
             });
+
+            // 2. Tải dữ liệu so sánh (Hôm qua hoặc Tuần trước)
+            const mode = document.getElementById('view-mode').value;
+            let compStart = null;
+            let compEnd = null;
+
+            if (mode === 'day') {
+                const d = new Date(dateStr);
+                d.setDate(d.getDate() - 1);
+                compStart = d.toISOString().split('T')[0];
+                compEnd = compStart;
+            } else if (mode === 'week') {
+                const dStart = new Date(dateStr);
+                dStart.setDate(dStart.getDate() - 7);
+                compStart = dStart.toISOString().split('T')[0];
+                
+                const dEnd = new Date(endDateStr || dateStr);
+                dEnd.setDate(dEnd.getDate() - 7);
+                compEnd = dEnd.toISOString().split('T')[0];
+            }
+
+            const newComparisonData = [];
+            if (compStart) {
+                let qComp;
+                if (compEnd && compEnd !== compStart) {
+                    qComp = query(collection(db, 'gate_statistics'), 
+                              where('date', '>=', compStart), 
+                              where('date', '<=', compEnd),
+                              orderBy('date', 'asc'));
+                } else {
+                    qComp = query(collection(db, 'gate_statistics'), where('date', '==', compStart));
+                }
+                const compSnapshot = await getDocs(qComp);
+                compSnapshot.forEach(doc => {
+                    newComparisonData.push(doc.data());
+                });
+            }
+
+            // 3. Tải cấu hình vận hành cáp treo cho ngày này
+            const opDocRef = doc(db, 'cable_operations', dateStr);
+            const opDocSnap = await getDoc(opDocRef);
+            const newCableOps = opDocSnap.exists() ? opDocSnap.data().cableData : null;
+
+            // Kiểm tra xem đây có còn là yêu cầu mới nhất không
+            if (requestId !== lastRequestId) return;
+
+            // Cập nhật các biến global một lần duy nhất
+            currentGlobalData = newCurrentData;
+            currentGlobalDataRange = { start: dateStr, end: endDateStr || dateStr };
+            comparisonGlobalData = newComparisonData;
+            currentDayCableOperations = newCableOps;
+
+            updateDashboardUI();
+            updateGateSelector();
+            
+            // Nếu đang ở tab Chi tiết nhà ga, cập nhật luôn
+            const selectedGate = document.getElementById('gate-selector').value;
+            if (selectedGate) {
+                renderGateDetails(selectedGate);
+            }
+
+            showLoading(false);
+        } catch (error) {
+            console.error("Lỗi tải dữ liệu:", error);
+            showLoading(false);
+            
+            if (error.message && error.message.includes("Missing or insufficient permissions")) {
+                const errInfo = {
+                    error: error.message,
+                    operationType: 'get',
+                    path: 'gate_statistics_or_cable_operations',
+                    authInfo: { userId: currentUser?.uid }
+                };
+                console.error('Firestore Error: ', JSON.stringify(errInfo));
+            }
         }
-
-        // 3. Tải cấu hình vận hành cáp treo cho ngày này
-        const opDocRef = doc(db, 'cable_operations', dateStr);
-        const opDocSnap = await getDoc(opDocRef);
-        const newCableOps = opDocSnap.exists() ? opDocSnap.data().cableData : null;
-
-        // Kiểm tra xem đây có còn là yêu cầu mới nhất không
-        if (requestId !== lastRequestId) return;
-
-        // Cập nhật các biến global một lần duy nhất
-        currentGlobalData = newCurrentData;
-        comparisonGlobalData = newComparisonData;
-        currentDayCableOperations = newCableOps;
-
-        updateDashboardUI();
-        updateGateSelector();
-        
-        // Nếu đang ở tab Chi tiết nhà ga, cập nhật luôn
-        const selectedGate = document.getElementById('gate-selector').value;
-        if (selectedGate) {
-            renderGateDetails(selectedGate);
-        }
-
-        showLoading(false);
-    } catch (error) {
-        console.error("Lỗi tải dữ liệu:", error);
-        showLoading(false);
-        
-        if (error.message && error.message.includes("Missing or insufficient permissions")) {
-            const errInfo = {
-                error: error.message,
-                operationType: 'get',
-                path: 'gate_statistics_or_cable_operations',
-                authInfo: { userId: currentUser?.uid }
-            };
-            console.error('Firestore Error: ', JSON.stringify(errInfo));
-        }
-    }
+    })();
+    await dashboardDataPromise;
 }
 
 function clearDashboard() {
@@ -2744,11 +2701,16 @@ async function saveOEEConfig() {
         const cableData = {};
 
         configs.forEach((cable, cableIdx) => {
+            if (cable.enabled === false) return; // Skip disabled cables
+
             const toggle = document.getElementById(`oee-toggle-${cableIdx}`);
             const segments = [];
             
             for (let segIdx = 0; segIdx < 5; segIdx++) {
-                const start = document.getElementById(`oee-start-${cableIdx}-${segIdx}`).value;
+                const startEl = document.getElementById(`oee-start-${cableIdx}-${segIdx}`);
+                if (!startEl) continue; // Skip if not rendered
+
+                const start = startEl.value;
                 const end = document.getElementById(`oee-end-${cableIdx}-${segIdx}`).value;
                 const speed = parseFloat(document.getElementById(`oee-speed-${cableIdx}-${segIdx}`).value);
                 const cabins = parseInt(document.getElementById(`oee-cabins-${cableIdx}-${segIdx}`).value);
@@ -2787,21 +2749,24 @@ async function renderOEECableList() {
     const dateStr = document.getElementById('oee-date-picker')?.value;
     const savedData = await checkOEEConfigStatus(dateStr);
     
-    const configs = getCableConfigs().filter(c => c.enabled !== false);
+    const allConfigs = getCableConfigs();
+    const configs = allConfigs.filter(c => c.enabled !== false);
     container.innerHTML = '';
     
-    configs.forEach((cable, cableIdx) => {
+    configs.forEach((cable) => {
+        const cableIdx = allConfigs.findIndex(c => c.id === cable.id);
         const saved = savedData ? savedData[cable.id] : null;
         const isActive = saved ? saved.active : true;
         
         // Default to 5 segments
-        const segments = (saved && saved.segments) ? saved.segments : [
-            { start: '08:00', end: '17:00', speed: cable.maxSpeed, cabins: cable.maxCabins },
-            { start: '', end: '', speed: '', cabins: '' },
-            { start: '', end: '', speed: '', cabins: '' },
-            { start: '', end: '', speed: '', cabins: '' },
-            { start: '', end: '', speed: '', cabins: '' }
+        let segments = (saved && saved.segments) ? [...saved.segments] : [
+            { start: '08:00', end: '17:00', speed: cable.maxSpeed, cabins: cable.maxCabins }
         ];
+        
+        // Pad to exactly 5 segments
+        while (segments.length < 5) {
+            segments.push({ start: '', end: '', speed: '', cabins: '' });
+        }
 
         const card = document.createElement('div');
         card.className = 'bg-white rounded-xl p-5 border border-slate-200 shadow-sm';
@@ -2866,11 +2831,14 @@ async function renderOEECableList() {
 }
 
 window.updateRowCapacity = function(cableIdx, segIdx) {
-    const configs = getCableConfigs().filter(c => c.enabled !== false);
-    const cable = configs[cableIdx];
+    const allConfigs = getCableConfigs();
+    const cable = allConfigs[cableIdx];
     if (!cable) return;
 
-    const speed = parseFloat(document.getElementById(`oee-speed-${cableIdx}-${segIdx}`).value);
+    const speedEl = document.getElementById(`oee-speed-${cableIdx}-${segIdx}`);
+    if (!speedEl) return;
+
+    const speed = parseFloat(speedEl.value);
     const cabins = parseInt(document.getElementById(`oee-cabins-${cableIdx}-${segIdx}`).value);
     const display = document.getElementById(`oee-cap-display-${cableIdx}-${segIdx}`);
 
@@ -2903,8 +2871,13 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
         });
 
         // 2. Lấy cấu hình tuyến cáp (chỉ những tuyến đang enable)
-        const configs = getCableConfigs().filter(c => c.enabled !== false);
-        const activeCables = configs.filter((_, index) => document.getElementById(`oee-toggle-${index}`).checked);
+        const allConfigs = getCableConfigs();
+        const configs = allConfigs.filter(c => c.enabled !== false);
+        const activeCables = configs.filter(cable => {
+            const configIndex = allConfigs.findIndex(c => c.id === cable.id);
+            const toggle = document.getElementById(`oee-toggle-${configIndex}`);
+            return toggle ? toggle.checked : false;
+        });
         
         if (activeCables.length === 0) {
             showNotification('Lỗi', 'Vui lòng chọn ít nhất 1 tuyến cáp để tính toán', 'error');
@@ -2936,7 +2909,7 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
 
         activeCables.forEach((cable) => {
             // Find original index in configs to access correct DOM elements
-            const configIndex = configs.findIndex(c => c.id === cable.id);
+            const configIndex = allConfigs.findIndex(c => c.id === cable.id);
             
             // Map Cable Name to Gate Name based on user requirements
             const CABLE_TO_GATE_MAP = {
@@ -2952,7 +2925,10 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
             // Lấy các segments từ UI
             const segments = [];
             for (let segIdx = 0; segIdx < 5; segIdx++) {
-                const start = document.getElementById(`oee-start-${configIndex}-${segIdx}`).value;
+                const startEl = document.getElementById(`oee-start-${configIndex}-${segIdx}`);
+                if (!startEl) continue;
+                
+                const start = startEl.value;
                 const end = document.getElementById(`oee-end-${configIndex}-${segIdx}`).value;
                 const speed = parseFloat(document.getElementById(`oee-speed-${configIndex}-${segIdx}`).value);
                 const cabins = parseInt(document.getElementById(`oee-cabins-${configIndex}-${segIdx}`).value);
@@ -2982,6 +2958,7 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
                 // Trừ downtime định mức (phút) khỏi 60 phút của 1 giờ
                 // Phân bổ downtime đều cho tổng thời gian hoạt động
                 const totalOperatingMinutes = segments.reduce((acc, s) => {
+                    if (!s.start || !s.end) return acc;
                     const [sH, sM] = s.start.split(':').map(Number);
                     const [eH, eM] = s.end.split(':').map(Number);
                     return acc + ((eH * 60 + eM) - (sH * 60 + sM));
@@ -2999,10 +2976,10 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
                     const bucket2 = `${hourInt.toString().padStart(2, '0')}:30 - ${(hourInt + 1).toString().padStart(2, '0')}:00`;
                     
                     if (gateData.hourlyData[bucket1]) {
-                        actualInHour += Object.values(gateData.hourlyData[bucket1]).reduce((s, c) => s + c, 0);
+                        actualInHour += Object.values(gateData.hourlyData[bucket1]).reduce((s, c) => s + Number(c), 0);
                     }
                     if (gateData.hourlyData[bucket2]) {
-                        actualInHour += Object.values(gateData.hourlyData[bucket2]).reduce((s, c) => s + c, 0);
+                        actualInHour += Object.values(gateData.hourlyData[bucket2]).reduce((s, c) => s + Number(c), 0);
                     }
                 }
 
@@ -3021,11 +2998,11 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
             }).join('');
 
             const avgOee = validHoursCount > 0 ? (totalOee / validHoursCount).toFixed(1) : '0.0';
-            oeeSummary.push({ name: gateName, avgOee, hourly: hourlyOeeValues });
+            oeeSummary.push({ name: cable.name, avgOee, hourly: hourlyOeeValues });
 
             tableHtml += `
                 <tr class="border-b border-slate-100 hover:bg-slate-50">
-                    <td class="py-3 font-medium sticky left-0 bg-white group-hover:bg-slate-50">${gateName}</td>
+                    <td class="py-3 font-medium sticky left-0 bg-white group-hover:bg-slate-50">${cable.name}</td>
                     ${hourlyHtml}
                     <td class="py-3 text-center font-bold text-indigo-600">${avgOee}%</td>
                 </tr>
@@ -3134,10 +3111,6 @@ function initReportFilters() {
     });
     targetFilter.appendChild(optGroupCable);
 
-    // Event listeners
-    document.getElementById('btn-generate-report')?.addEventListener('click', generateReport);
-    document.getElementById('report-type-filter')?.addEventListener('change', updateReportVisibility);
-    
     // Set default date range to last 30 days if not already set
     const dateStartInput = document.getElementById('global-date');
     const dateEndInput = document.getElementById('global-date-end');
@@ -3154,6 +3127,7 @@ function initReportFilters() {
         
         // Trigger UI updates for date range mode
         viewModeSelect.dispatchEvent(new Event('change'));
+        handleDateChange();
     }
 
     // Auto generate report on first load if not already generated
@@ -3192,8 +3166,9 @@ function updateReportVisibility() {
 async function generateReport() {
     if (!db) return;
     
+    const mode = document.getElementById('view-mode').value;
     const startDate = document.getElementById('global-date').value;
-    const endDate = document.getElementById('global-date-end').value || startDate;
+    const endDate = mode === 'range' ? (document.getElementById('global-date-end').value || startDate) : startDate;
     const target = document.getElementById('report-target-filter').value;
     const type = document.getElementById('report-type-filter').value;
     
@@ -3204,15 +3179,23 @@ async function generateReport() {
 
     showLoading(true, 'Đang tạo báo cáo...');
     
+    if (dashboardDataPromise) {
+        await dashboardDataPromise;
+    }
+    
     try {
         // Fetch Traffic Data
-        const qTraffic = query(collection(db, 'gate_statistics'), 
-                  where('date', '>=', startDate), 
-                  where('date', '<=', endDate),
-                  orderBy('date', 'asc'));
-        const trafficSnap = await getDocs(qTraffic);
-        const trafficData = [];
-        trafficSnap.forEach(doc => trafficData.push(doc.data()));
+        let trafficData = [];
+        if (currentGlobalDataRange.start === startDate && currentGlobalDataRange.end === endDate) {
+            trafficData = currentGlobalData;
+        } else {
+            const qTraffic = query(collection(db, 'gate_statistics'), 
+                      where('date', '>=', startDate), 
+                      where('date', '<=', endDate),
+                      orderBy('date', 'asc'));
+            const trafficSnap = await getDocs(qTraffic);
+            trafficSnap.forEach(doc => trafficData.push(doc.data()));
+        }
 
         // Fetch OEE Data
         const qOee = query(collection(db, 'cable_operations'), 
@@ -3560,15 +3543,10 @@ function renderReportCharts(labels, trafficData, oeeActualData, oeeIdealData) {
 // Initialize
 setTimeout(() => {
     renderCableConfigs();
-    
-    const datePicker = document.getElementById('oee-date-picker');
-    if (datePicker) {
-        datePicker.addEventListener('change', () => {
-            renderOEECableList();
-        });
-    }
 
     document.getElementById('btn-save-oee-config')?.addEventListener('click', saveOEEConfig);
+    document.getElementById('btn-generate-report')?.addEventListener('click', generateReport);
+    document.getElementById('report-type-filter')?.addEventListener('change', updateReportVisibility);
 }, 500);
 
 initFirebase();
