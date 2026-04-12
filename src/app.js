@@ -139,6 +139,29 @@ async function initFirebase() {
         db = getFirestore(app, config.firestoreDatabaseId);
         auth = getAuth(app);
         
+        // 1. Tìm ngày mới nhất ngay lập tức để làm mốc cho toàn bộ ứng dụng
+        const finalDate = await findLatestDate();
+        
+        // 2. Thiết lập các bộ chọn ngày với ngày mới nhất này
+        const globalDate = document.getElementById('global-date');
+        if (globalDate) globalDate.value = finalDate;
+        
+        const oeeDatePicker = document.getElementById('oee-date-picker');
+        if (oeeDatePicker) {
+            oeeDatePicker.value = finalDate;
+            oeeDatePicker.addEventListener('change', renderOEECableList);
+        }
+        
+        const uploadDate = document.getElementById('upload-date');
+        if (uploadDate) uploadDate.value = finalDate;
+
+        // Reset view mode to 'day' for initial load
+        const viewMode = document.getElementById('view-mode');
+        if (viewMode) viewMode.value = 'day';
+        
+        const globalDateEnd = document.getElementById('global-date-end');
+        if (globalDateEnd) globalDateEnd.value = '';
+
         // Listen for auth state changes
         onAuthStateChanged(auth, async (user) => {
             if (user) {
@@ -185,36 +208,12 @@ async function initFirebase() {
         // Load cable configs from Firestore
         await loadCableConfigsFromFirestore();
         
-        // Luôn lấy ngày có dữ liệu gần nhất trong DB cho lần tải đầu tiên
-        const finalDate = await findLatestDate();
-        
-        // Reset view mode and dates to ensure consistency on load
-        const viewMode = document.getElementById('view-mode');
-        if (viewMode) {
-            viewMode.value = 'day';
-        }
-        
-        const globalDateEnd = document.getElementById('global-date-end');
-        if (globalDateEnd) globalDateEnd.value = '';
-
-        const globalDate = document.getElementById('global-date');
+        // Trigger initial data load
         if (globalDate) {
-            globalDate.value = finalDate;
-            // Trigger change event to load data
             globalDate.dispatchEvent(new Event('change'));
         }
         
-        document.getElementById('upload-date').value = finalDate;
-        
-        // Sync OEE date picker
-        const oeeDatePicker = document.getElementById('oee-date-picker');
-        if (oeeDatePicker) {
-            oeeDatePicker.value = finalDate;
-            oeeDatePicker.addEventListener('change', renderOEECableList);
-            // We don't need to dispatch change here if we call renderOEECableList manually or if it's handled by loadDashboardData
-            renderOEECableList();
-        }
-
+        renderOEECableList();
         setupAuthListeners();
         
         // Ensure auth section is visible
@@ -273,15 +272,28 @@ function populateWeekSelector() {
 
 async function findLatestDate() {
     try {
-        // Truy vấn lấy ngày mới nhất từ Firestore
-        const q = query(collection(db, 'gate_statistics'), orderBy('date', 'desc'), limit(1));
-        const snapshot = await getDocs(q);
-        if (!snapshot.empty) {
-            return snapshot.docs[0].data().date;
+        console.log("Searching for latest date with data...");
+        // Check gate_statistics
+        const q1 = query(collection(db, 'gate_statistics'), orderBy('date', 'desc'), limit(1));
+        const snap1 = await getDocs(q1);
+        
+        // Check cable_operations
+        const q2 = query(collection(db, 'cable_operations'), orderBy('date', 'desc'), limit(1));
+        const snap2 = await getDocs(q2);
+        
+        let dates = [];
+        if (!snap1.empty) dates.push(snap1.docs[0].data().date);
+        if (!snap2.empty) dates.push(snap2.docs[0].data().date);
+        
+        if (dates.length > 0) {
+            dates.sort((a, b) => b.localeCompare(a));
+            console.log("Latest date found:", dates[0]);
+            return dates[0];
         }
     } catch (error) {
         console.error("Lỗi tìm ngày mới nhất:", error);
     }
+    console.log("No data found, using default date: 2026-03-28");
     return '2026-03-28'; // Mặc định nếu hoàn toàn chưa có dữ liệu
 }
 
@@ -3236,7 +3248,7 @@ function initReportFilters() {
     const dateEndInput = document.getElementById('global-date-end');
     const viewModeSelect = document.getElementById('view-mode');
 
-    if (dateStartInput && dateEndInput && viewModeSelect && !dateEndInput.value) {
+    if (dateStartInput && dateEndInput && viewModeSelect && !dateStartInput.value && !dateEndInput.value) {
         const end = new Date();
         const start = new Date();
         start.setDate(end.getDate() - 30);
