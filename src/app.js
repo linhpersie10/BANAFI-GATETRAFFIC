@@ -7,17 +7,206 @@ import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signO
 import { GoogleGenAI } from "@google/genai";
 import config from '../firebase-applet-config.json';
 
+// --- UTILITIES ---
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+function handleViewModeChange() {
+    const viewModeEl = document.getElementById('view-mode');
+    if (!viewModeEl) return;
+    
+    const mode = viewModeEl.value;
+    const datePicker = document.getElementById('date-picker-container');
+    const weekPicker = document.getElementById('week-picker-container');
+    const dateEnd = document.getElementById('global-date-end');
+    const separator = document.getElementById('date-range-separator');
+    const dateStart = document.getElementById('global-date');
+
+    if (mode === 'range') {
+        datePicker?.classList.remove('hidden');
+        weekPicker?.classList.add('hidden');
+        weekPicker?.classList.remove('flex');
+        dateEnd?.classList.remove('hidden');
+        separator?.classList.remove('hidden');
+    } else if (mode === 'week') {
+        datePicker?.classList.add('hidden');
+        weekPicker?.classList.remove('hidden');
+        weekPicker?.classList.add('flex');
+        if (typeof handleWeekChange === 'function') handleWeekChange();
+    } else {
+        datePicker?.classList.remove('hidden');
+        weekPicker?.classList.add('hidden');
+        weekPicker?.classList.remove('flex');
+        dateEnd?.classList.add('hidden');
+        separator?.classList.add('hidden');
+        if (dateStart?.value && typeof handleDateChange === 'function') {
+            handleDateChange();
+        }
+    }
+}
+
 // --- FIREBASE INITIALIZATION ---
 let db;
 let auth;
+
+const OperationType = {
+    CREATE: 'create',
+    UPDATE: 'update',
+    DELETE: 'delete',
+    LIST: 'list',
+    GET: 'get',
+    WRITE: 'write',
+};
+
+function handleFirestoreError(error, operationType, path) {
+    const errInfo = {
+        error: error instanceof Error ? error.message : String(error),
+        authInfo: {
+            userId: auth?.currentUser?.uid || null,
+            email: auth?.currentUser?.email || null,
+            emailVerified: auth?.currentUser?.emailVerified || false,
+            isAnonymous: auth?.currentUser?.isAnonymous || false,
+            providerInfo: auth?.currentUser?.providerData.map(provider => ({
+                providerId: provider.providerId,
+                displayName: provider.displayName,
+                email: provider.email,
+                photoUrl: provider.photoURL
+            })) || []
+        },
+        operationType,
+        path
+    };
+    if (errInfo.error.includes('permission-denied') || errInfo.error.includes('Missing or insufficient permissions')) {
+        showNotification("Lỗi phân quyền", "Bạn không có quyền truy cập dữ liệu này. Vui lòng đăng nhập lại hoặc liên hệ quản trị viên.", "error");
+    }
+    
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+    // Trả về snapshot rỗng để ứng dụng không bị crash
+    return { empty: true, docs: [] };
+}
 let currentUser = null;
 let userRole = 'user'; // 'admin' or 'user'
 let userStatus = 'pending'; // 'approved' or 'pending'
+
+// --- CACHING CẤP ĐỘ CLIENT ---
+// Biến toàn cục lưu trữ dữ liệu đã tải từ Firestore để tránh đọc lại nhiều lần
+// Sử dụng kết hợp In-memory và LocalStorage/SessionStorage
+let firestoreCache = { 
+    gateStats: JSON.parse(localStorage.getItem('cache_gateStats') || '{}'), 
+    cableOps: JSON.parse(localStorage.getItem('cache_cableOps') || '{}'),
+    latestDate: sessionStorage.getItem('cache_latestDate') || null,
+    userProfile: JSON.parse(sessionStorage.getItem('cache_userProfile') || 'null'),
+    lastSyncGateStats: localStorage.getItem('cache_lastSyncGateStats') || null,
+    lastSyncCableOps: localStorage.getItem('cache_lastSyncCableOps') || null
+};
+
+// Hàm lưu cache vào LocalStorage để tồn tại qua các lần refresh trang
+function saveToPersistentCache(key, data) {
+    try {
+        const cacheKey = `cache_${key}`;
+        const currentCache = JSON.parse(localStorage.getItem(cacheKey) || '{}');
+        const updatedCache = { ...currentCache, ...data };
+        localStorage.setItem(cacheKey, JSON.stringify(updatedCache));
+        firestoreCache[key] = updatedCache;
+        
+        const now = new Date().toISOString();
+        if (key === 'gateStats') {
+            localStorage.setItem('cache_lastSyncGateStats', now);
+            firestoreCache.lastSyncGateStats = now;
+        } else if (key === 'cableOps') {
+            localStorage.setItem('cache_lastSyncCableOps', now);
+            firestoreCache.lastSyncCableOps = now;
+        }
+    } catch (e) {
+        console.warn("Cache persistent failed (likely quota exceeded):", e);
+    }
+}
+
+/**
+ * Đồng bộ dữ liệu từ Firestore dựa trên mốc thời gian cập nhật cuối cùng (Delta Fetching)
+ * Giúp giảm thiểu số lượng Read bằng cách chỉ tải những gì đã thay đổi.
+ */
+async function syncData() {
+    if (!db) return;
+    
+    console.log("Syncing data (Delta Fetching)...");
+    const now = new Date().toISOString();
+    
+    try {
+        // 1. Sync Gate Stats
+        let qGate;
+        if (firestoreCache.lastSyncGateStats) {
+            qGate = query(collection(db, 'gate_statistics_daily'), 
+                        where('updatedAt', '>', firestoreCache.lastSyncGateStats));
+        } else {
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+            qGate = query(collection(db, 'gate_statistics_daily'), 
+                        where('date', '>=', sevenDaysAgo.toISOString().split('T')[0]));
+        }
+        
+        const gateSnap = await getDocs(qGate).catch(err => handleFirestoreError(err, 'LIST', 'gate_statistics_daily'));
+        if (!gateSnap.empty) {
+            const newData = {};
+            gateSnap.forEach(doc => { newData[doc.id] = doc.data(); });
+            saveToPersistentCache('gateStats', newData);
+            console.log(`Synced ${gateSnap.size} gate stats.`);
+        } else {
+            localStorage.setItem('cache_lastSyncGateStats', now);
+            firestoreCache.lastSyncGateStats = now;
+        }
+
+        // 2. Sync Cable Ops
+        let qCable;
+        if (firestoreCache.lastSyncCableOps) {
+            qCable = query(collection(db, 'cable_operations'), 
+                         where('updatedAt', '>', firestoreCache.lastSyncCableOps));
+        } else {
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+            qCable = query(collection(db, 'cable_operations'), 
+                         where('date', '>=', sevenDaysAgo.toISOString().split('T')[0]));
+        }
+
+        const cableSnap = await getDocs(qCable).catch(err => handleFirestoreError(err, 'LIST', 'cable_operations'));
+        if (!cableSnap.empty) {
+            const newData = {};
+            cableSnap.forEach(doc => { newData[doc.id] = doc.data(); });
+            saveToPersistentCache('cableOps', newData);
+            console.log(`Synced ${cableSnap.size} cable ops.`);
+        } else {
+            localStorage.setItem('cache_lastSyncCableOps', now);
+            firestoreCache.lastSyncCableOps = now;
+        }
+    } catch (error) {
+        console.error("Error syncing data:", error);
+    }
+}
 let lastRequestId = 0;
 let cachedCableConfigs = null;
 
 async function loadCableConfigsFromFirestore() {
     if (!db) return;
+    
+    // Kiểm tra cache local trước
+    const lastFetch = localStorage.getItem('cableConfigs_lastFetch');
+    const now = Date.now();
+    const CACHE_TTL = 30 * 60 * 1000; // 30 phút
+
+    if (lastFetch && (now - parseInt(lastFetch)) < CACHE_TTL && cachedCableConfigs) {
+        console.log("Using cached cable configs (TTL valid)");
+        return;
+    }
+
     console.log("Loading cable configs from Firestore...");
     try {
         const docRef = doc(db, 'app_settings', 'cable_configs');
@@ -27,6 +216,7 @@ async function loadCableConfigsFromFirestore() {
             if (data && data.configs) {
                 cachedCableConfigs = data.configs;
                 localStorage.setItem('cableConfigs', JSON.stringify(cachedCableConfigs));
+                localStorage.setItem('cableConfigs_lastFetch', now.toString());
                 console.log("Cable configs loaded from Firestore:", cachedCableConfigs.length, "items");
                 
                 // Re-render UI components that depend on cable configs
@@ -139,10 +329,12 @@ async function initFirebase() {
         db = getFirestore(app, config.firestoreDatabaseId);
         auth = getAuth(app);
         
-        // 1. Tìm ngày mới nhất ngay lập tức để làm mốc cho toàn bộ ứng dụng
+        // 1. Khôi phục trạng thái filter hoặc tìm ngày mới nhất
+        // Theo yêu cầu: Luôn hiển thị dữ liệu ngày mới nhất khi tải trang lần đầu
+        // Chúng ta vẫn lấy từ session nếu có để tránh lãng phí Read, nhưng ưu tiên logic "ngày gần nhất"
         const finalDate = await findLatestDate();
         
-        // 2. Thiết lập các bộ chọn ngày với ngày mới nhất này
+        // 2. Thiết lập các bộ chọn ngày
         const globalDate = document.getElementById('global-date');
         if (globalDate) globalDate.value = finalDate;
         
@@ -155,17 +347,31 @@ async function initFirebase() {
         const uploadDate = document.getElementById('upload-date');
         if (uploadDate) uploadDate.value = finalDate;
 
-        // Reset view mode to 'day' for initial load
+        // Restore view mode - Luôn mặc định là 'day' (Theo ngày) khi tải trang
         const viewMode = document.getElementById('view-mode');
-        if (viewMode) viewMode.value = 'day';
+        if (viewMode) {
+            viewMode.value = 'day';
+            sessionStorage.setItem('filter_viewMode', 'day');
+        }
         
         const globalDateEnd = document.getElementById('global-date-end');
-        if (globalDateEnd) globalDateEnd.value = '';
+        if (globalDateEnd) globalDateEnd.value = ''; // Reset range end on load
+
+        handleViewModeChange(); // Cập nhật UI dựa trên view mode
 
         // Listen for auth state changes
         onAuthStateChanged(auth, async (user) => {
             if (user) {
                 currentUser = user;
+                
+                // Kiểm tra cache profile trong session
+                if (firestoreCache.userProfile && firestoreCache.userProfile.uid === user.uid) {
+                    userRole = firestoreCache.userProfile.role;
+                    userStatus = firestoreCache.userProfile.status;
+                    updateAuthUI();
+                    return;
+                }
+
                 // Fetch user role and status from Firestore
                 try {
                     const userDocRef = doc(db, 'users', user.uid);
@@ -175,6 +381,10 @@ async function initFirebase() {
                         const userData = userDocSnap.data();
                         userRole = userData.role || 'user';
                         userStatus = userData.status || 'pending';
+                        
+                        // Lưu vào session cache
+                        firestoreCache.userProfile = { uid: user.uid, role: userRole, status: userStatus };
+                        sessionStorage.setItem('cache_userProfile', JSON.stringify(firestoreCache.userProfile));
                     } else {
                         // Create new user profile
                         const isInitialAdmin = user.email === "linh.persie.10@gmail.com";
@@ -271,30 +481,57 @@ function populateWeekSelector() {
 }
 
 async function findLatestDate() {
+    // Kiểm tra session cache trước
+    if (firestoreCache.latestDate) {
+        console.log("Using cached latest date:", firestoreCache.latestDate);
+        return firestoreCache.latestDate;
+    }
+
     try {
         console.log("Searching for latest date with data...");
-        // Check gate_statistics
-        const q1 = query(collection(db, 'gate_statistics'), orderBy('date', 'desc'), limit(1));
-        const snap1 = await getDocs(q1);
         
-        // Check cable_operations
-        const q2 = query(collection(db, 'cable_operations'), orderBy('date', 'desc'), limit(1));
-        const snap2 = await getDocs(q2);
+        // 1. Check gate_statistics_daily (New collection)
+        const qNew = query(collection(db, 'gate_statistics_daily'), orderBy('date', 'desc'), limit(1));
+        const snapNew = await getDocs(qNew).catch(err => {
+            console.warn("Error querying gate_statistics_daily:", err);
+            return { empty: true };
+        });
+
+        // 2. Check gate_statistics (Old collection)
+        const qOld = query(collection(db, 'gate_statistics'), orderBy('date', 'desc'), limit(1));
+        const snapOld = await getDocs(qOld).catch(err => {
+            console.warn("Error querying gate_statistics:", err);
+            return { empty: true };
+        });
+        
+        // 3. Check cable_operations
+        const qCable = query(collection(db, 'cable_operations'), orderBy('date', 'desc'), limit(1));
+        const snapCable = await getDocs(qCable).catch(err => {
+            console.warn("Error querying cable_operations:", err);
+            return { empty: true };
+        });
         
         let dates = [];
-        if (!snap1.empty) dates.push(snap1.docs[0].data().date);
-        if (!snap2.empty) dates.push(snap2.docs[0].data().date);
+        if (snapNew && !snapNew.empty) dates.push(snapNew.docs[0].data().date);
+        if (snapOld && !snapOld.empty) dates.push(snapOld.docs[0].data().date);
+        if (snapCable && !snapCable.empty) dates.push(snapCable.docs[0].data().date);
         
         if (dates.length > 0) {
             dates.sort((a, b) => b.localeCompare(a));
-            console.log("Latest date found:", dates[0]);
-            return dates[0];
+            const latest = dates[0];
+            console.log("Latest date found across all collections:", latest);
+            
+            firestoreCache.latestDate = latest;
+            sessionStorage.setItem('cache_latestDate', latest);
+            return latest;
         }
     } catch (error) {
-        console.error("Lỗi tìm ngày mới nhất:", error);
+        console.error("Lỗi nghiêm trọng khi tìm ngày mới nhất:", error);
     }
-    console.log("No data found, using default date: 2026-03-28");
-    return '2026-03-28'; // Mặc định nếu hoàn toàn chưa có dữ liệu
+    
+    const defaultDate = '2026-03-28';
+    console.log("No data found in any collection, using default date:", defaultDate);
+    return defaultDate;
 }
 
 // --- AUTHENTICATION ---
@@ -566,10 +803,22 @@ async function checkExistingData(dateStr) {
     dataStatusBadge.textContent = 'Đang kiểm tra...';
     
     try {
-        const q = query(collection(db, 'gate_statistics'), where('date', '==', dateStr));
-        const snapshot = await getDocs(q);
+        let exists = false;
         
-        if (!snapshot.empty) {
+        // --- KIỂM TRA TRONG CACHE TRƯỚC ---
+        if (firestoreCache.gateStats[dateStr]) {
+            exists = true;
+        } else {
+            // Nếu không có trong cache mới hỏi Firestore
+            const docRef = doc(db, 'gate_statistics_daily', dateStr);
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+                exists = true;
+                firestoreCache.gateStats[dateStr] = docSnap.data(); // Cất vào cache luôn
+            }
+        }
+        
+        if (exists) {
             isUpdateMode = true;
             deleteDataBtn.classList.remove('hidden');
             dataStatusBadge.textContent = 'Dữ liệu ngày này đã tồn tại';
@@ -636,23 +885,15 @@ deleteDataBtn.addEventListener('click', () => {
         async () => {
             showLoading(true, 'Đang xóa dữ liệu...');
             try {
-                const q = query(collection(db, 'gate_statistics'), where('date', '==', dateStr));
-                const snapshot = await getDocs(q);
+                // Xóa document duy nhất của ngày này
+                const docRef = doc(db, 'gate_statistics_daily', dateStr);
+                await deleteDoc(docRef);
                 
-                let deleteBatch = writeBatch(db);
-                let deleteCount = 0;
-                
-                for (const docSnap of snapshot.docs) {
-                    deleteBatch.delete(docSnap.ref);
-                    deleteCount++;
-                    if (deleteCount === 500) {
-                        await deleteBatch.commit();
-                        deleteBatch = writeBatch(db);
-                        deleteCount = 0;
-                    }
-                }
-                if (deleteCount > 0) {
-                    await deleteBatch.commit();
+                // --- INVALIDATE CACHE ---
+                delete firestoreCache.gateStats[dateStr];
+                if (firestoreCache.latestDate === dateStr) {
+                    firestoreCache.latestDate = null;
+                    sessionStorage.removeItem('cache_latestDate');
                 }
                 
                 showLoading(false);
@@ -972,38 +1213,12 @@ async function uploadToFirestore(aggregatedData, targetDate) {
     showLoading(true, 'Đang lưu dữ liệu lên Cloud Firestore...');
     
     try {
-        // Nếu là Update Mode, xóa dữ liệu cũ của ngày này trước
-        if (isUpdateMode) {
-            const q = query(collection(db, 'gate_statistics'), where('date', '==', targetDate));
-            const snapshot = await getDocs(q);
-            
-            // Xóa theo batch (giới hạn 500 thao tác mỗi batch)
-            let deleteBatch = writeBatch(db);
-            let deleteCount = 0;
-            
-            for (const docSnap of snapshot.docs) {
-                deleteBatch.delete(docSnap.ref);
-                deleteCount++;
-                if (deleteCount === 500) {
-                    await deleteBatch.commit();
-                    deleteBatch = writeBatch(db);
-                    deleteCount = 0;
-                }
-            }
-            if (deleteCount > 0) {
-                await deleteBatch.commit();
-            }
-        }
-
-        // Ghi dữ liệu mới
-        let writeCount = 0;
-        let batch = writeBatch(db);
         const timestamp = new Date().toISOString();
-
+        const docRef = doc(db, 'gate_statistics_daily', targetDate);
+        
+        // Chuẩn bị dữ liệu gatesData (Gom tất cả nhà ga vào 1 document)
+        const gatesData = {};
         for (const [gateName, data] of Object.entries(aggregatedData)) {
-            const docId = `${targetDate}_${gateName.replace(/\s+/g, '')}`;
-            const docRef = doc(db, 'gate_statistics', docId);
-            
             // Process lane data to include duration
             const processedLanes = {};
             Object.entries(data.lanes).forEach(([lane, stats]) => {
@@ -1017,28 +1232,30 @@ async function uploadToFirestore(aggregatedData, targetDate) {
                 };
             });
 
-            const payload = {
-                date: targetDate,
-                gateName: gateName,
-                totalPassengers: data.total,
-                hourlyData: data.hourly,
-                laneData: processedLanes,
-                updatedAt: timestamp
+            gatesData[gateName] = {
+                total: data.total,
+                hourly: data.hourly,
+                lanes: processedLanes
             };
-
-            batch.set(docRef, payload);
-            writeCount++;
-
-            // Firestore batch limit là 500
-            if (writeCount === 500) {
-                await batch.commit();
-                batch = writeBatch(db);
-                writeCount = 0;
-            }
         }
 
-        if (writeCount > 0) {
-            await batch.commit();
+        const payload = {
+            date: targetDate,
+            updatedAt: timestamp,
+            gatesData: gatesData
+        };
+
+        // Lưu vào Firestore (Ghi đè nếu đã tồn tại) - Tốn 1 Write thay vì N Write
+        await setDoc(docRef, payload);
+
+        // --- INVALIDATE CACHE ---
+        // Xóa cache của ngày này để lần sau tải lại sẽ lấy dữ liệu mới nhất
+        delete firestoreCache.gateStats[targetDate];
+        
+        // Cập nhật ngày mới nhất nếu cần
+        if (!firestoreCache.latestDate || targetDate > firestoreCache.latestDate) {
+            firestoreCache.latestDate = targetDate;
+            sessionStorage.setItem('cache_latestDate', targetDate);
         }
 
         showLoading(false);
@@ -1292,39 +1509,25 @@ document.getElementById('btn-interval-30m')?.addEventListener('click', () => {
 });
 
 document.getElementById('view-mode').addEventListener('change', (e) => {
-    const mode = e.target.value;
-    const datePicker = document.getElementById('date-picker-container');
-    const weekPicker = document.getElementById('week-picker-container');
-    const dateEnd = document.getElementById('global-date-end');
-    const separator = document.getElementById('date-range-separator');
-    const dateStart = document.getElementById('global-date');
-
-    if (mode === 'range') {
-        datePicker.classList.remove('hidden');
-        weekPicker.classList.add('hidden');
-        weekPicker.classList.remove('flex');
-        dateEnd.classList.remove('hidden');
-        separator.classList.remove('hidden');
-    } else if (mode === 'week') {
-        datePicker.classList.add('hidden');
-        weekPicker.classList.remove('hidden');
-        weekPicker.classList.add('flex');
-        handleWeekChange();
-    } else {
-        datePicker.classList.remove('hidden');
-        weekPicker.classList.add('hidden');
-        weekPicker.classList.remove('flex');
-        dateEnd.classList.add('hidden');
-        separator.classList.add('hidden');
-        if (dateStart.value) {
-            handleDateChange();
-        }
-    }
+    sessionStorage.setItem('filter_viewMode', e.target.value);
+    handleViewModeChange();
 });
 
-document.getElementById('global-date').addEventListener('change', handleDateChange);
-document.getElementById('global-date-end').addEventListener('change', handleDateChange);
-document.getElementById('week-selector').addEventListener('change', handleWeekChange);
+const debouncedHandleDateChange = debounce(handleDateChange, 300);
+
+document.getElementById('global-date').addEventListener('change', () => {
+    sessionStorage.setItem('filter_dateStart', document.getElementById('global-date').value);
+    debouncedHandleDateChange();
+});
+document.getElementById('global-date-end').addEventListener('change', () => {
+    sessionStorage.setItem('filter_dateEnd', document.getElementById('global-date-end').value);
+    debouncedHandleDateChange();
+});
+
+document.getElementById('week-selector').addEventListener('change', () => {
+    sessionStorage.setItem('filter_week', document.getElementById('week-selector').value);
+    handleWeekChange();
+});
 
 function handleWeekChange() {
     const weekVal = document.getElementById('week-selector').value;
@@ -1349,6 +1552,65 @@ function handleDateChange() {
     }
 }
 
+async function fetchDayData(dateStr) {
+    // 1. Kiểm tra Cache Memory
+    if (firestoreCache.gateStats[dateStr]) {
+        return firestoreCache.gateStats[dateStr];
+    }
+
+    try {
+        // 2. Thử tải từ Collection mới (gate_statistics_daily)
+        const docRef = doc(db, 'gate_statistics_daily', dateStr);
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+            const dayData = docSnap.data();
+            const update = {};
+            update[dateStr] = dayData;
+            saveToPersistentCache('gateStats', update);
+            return dayData;
+        }
+
+        // 3. Nếu không có, thử tải từ Collection cũ (gate_statistics) - Backward Compatibility
+        console.log(`Data not found in new collection for ${dateStr}, checking old collection...`);
+        const qOld = query(collection(db, 'gate_statistics'), where('date', '==', dateStr));
+        const oldSnap = await getDocs(qOld);
+        
+        if (!oldSnap.empty) {
+            const gatesData = {};
+            let latestUpdate = '';
+            
+            oldSnap.forEach(d => {
+                const data = d.data();
+                gatesData[data.gateName] = {
+                    total: data.totalPassengers,
+                    hourly: data.hourlyData,
+                    lanes: data.laneData
+                };
+                if (data.updatedAt > latestUpdate) latestUpdate = data.updatedAt;
+            });
+            
+            const aggregatedDayData = {
+                date: dateStr,
+                updatedAt: latestUpdate || new Date().toISOString(),
+                gatesData: gatesData
+            };
+            
+            // Lưu vào cache để lần sau không phải query collection cũ nữa
+            const update = {};
+            update[dateStr] = aggregatedDayData;
+            saveToPersistentCache('gateStats', update);
+            
+            return aggregatedDayData;
+        }
+    } catch (error) {
+        console.error(`Error fetching data for ${dateStr}:`, error);
+        handleFirestoreError(error, OperationType.GET, `gate_statistics_daily/${dateStr}`);
+    }
+    
+    return null;
+}
+
 async function loadDashboardData(dateStr, endDateStr = null) {
     if (!db) return;
     const requestId = ++lastRequestId;
@@ -1356,69 +1618,97 @@ async function loadDashboardData(dateStr, endDateStr = null) {
     
     dashboardDataPromise = (async () => {
         try {
-            // 1. Tải dữ liệu hiện tại
-            let q;
-            if (endDateStr && endDateStr !== dateStr) {
-                q = query(collection(db, 'gate_statistics'), 
-                          where('date', '>=', dateStr), 
-                          where('date', '<=', endDateStr),
-                          orderBy('date', 'asc'));
-            } else {
-                q = query(collection(db, 'gate_statistics'), where('date', '==', dateStr));
+            // Đảm bảo dữ liệu đã được đồng bộ (Delta Fetching)
+            const lastSyncSession = sessionStorage.getItem('last_sync_run');
+            const now = Date.now();
+            if (!lastSyncSession || (now - parseInt(lastSyncSession)) > 5 * 60 * 1000) {
+                await syncData();
+                sessionStorage.setItem('last_sync_run', now.toString());
             }
-            const snapshot = await getDocs(q);
-            
-            const newCurrentData = [];
-            snapshot.forEach(doc => {
-                newCurrentData.push(doc.data());
-            });
 
-            // 2. Tải dữ liệu so sánh (Hôm qua hoặc Tuần trước)
+            // 1. Tải dữ liệu hiện tại
+            const newCurrentData = [];
+            const datesToFetch = [];
+            
+            if (endDateStr && endDateStr !== dateStr) {
+                let curr = new Date(dateStr);
+                const end = new Date(endDateStr);
+                while (curr <= end) {
+                    datesToFetch.push(curr.toISOString().split('T')[0]);
+                    curr.setDate(curr.getDate() + 1);
+                }
+            } else {
+                datesToFetch.push(dateStr);
+            }
+
+            for (const d of datesToFetch) {
+                const dayData = await fetchDayData(d);
+                if (dayData) {
+                    Object.entries(dayData.gatesData).forEach(([gateName, data]) => {
+                        newCurrentData.push({
+                            date: d,
+                            gateName: gateName,
+                            totalPassengers: data.total,
+                            hourlyData: data.hourly,
+                            laneData: data.lanes
+                        });
+                    });
+                }
+            }
+
+            // 2. Tải dữ liệu so sánh
             const mode = document.getElementById('view-mode').value;
-            let compStart = null;
-            let compEnd = null;
+            let compDates = [];
 
             if (mode === 'day') {
                 const d = new Date(dateStr);
                 d.setDate(d.getDate() - 1);
-                compStart = d.toISOString().split('T')[0];
-                compEnd = compStart;
+                compDates.push(d.toISOString().split('T')[0]);
             } else if (mode === 'week') {
-                const dStart = new Date(dateStr);
-                dStart.setDate(dStart.getDate() - 7);
-                compStart = dStart.toISOString().split('T')[0];
-                
-                const dEnd = new Date(endDateStr || dateStr);
-                dEnd.setDate(dEnd.getDate() - 7);
-                compEnd = dEnd.toISOString().split('T')[0];
+                let curr = new Date(dateStr);
+                curr.setDate(curr.getDate() - 7);
+                const end = new Date(endDateStr || dateStr);
+                end.setDate(end.getDate() - 7);
+                while (curr <= end) {
+                    compDates.push(curr.toISOString().split('T')[0]);
+                    curr.setDate(curr.getDate() + 1);
+                }
             }
 
             const newComparisonData = [];
-            if (compStart) {
-                let qComp;
-                if (compEnd && compEnd !== compStart) {
-                    qComp = query(collection(db, 'gate_statistics'), 
-                              where('date', '>=', compStart), 
-                              where('date', '<=', compEnd),
-                              orderBy('date', 'asc'));
-                } else {
-                    qComp = query(collection(db, 'gate_statistics'), where('date', '==', compStart));
+            for (const d of compDates) {
+                const dayData = await fetchDayData(d);
+                if (dayData) {
+                    Object.entries(dayData.gatesData).forEach(([gateName, data]) => {
+                        newComparisonData.push({
+                            date: d,
+                            gateName: gateName,
+                            totalPassengers: data.total,
+                            hourlyData: data.hourly,
+                            laneData: data.lanes
+                        });
+                    });
                 }
-                const compSnapshot = await getDocs(qComp);
-                compSnapshot.forEach(doc => {
-                    newComparisonData.push(doc.data());
-                });
             }
 
-            // 3. Tải cấu hình vận hành cáp treo cho ngày này
-            const opDocRef = doc(db, 'cable_operations', dateStr);
-            const opDocSnap = await getDoc(opDocRef);
-            const newCableOps = opDocSnap.exists() ? opDocSnap.data().cableData : null;
+            // 3. Tải cấu hình vận hành cáp treo (Sử dụng Cache nếu có)
+            let newCableOps = null;
+            if (firestoreCache.cableOps[dateStr]) {
+                newCableOps = firestoreCache.cableOps[dateStr].cableData;
+            } else {
+                const opDocRef = doc(db, 'cable_operations', dateStr);
+                const opDocSnap = await getDoc(opDocRef);
+                if (opDocSnap.exists()) {
+                    const opData = opDocSnap.data();
+                    firestoreCache.cableOps[dateStr] = opData;
+                    newCableOps = opData.cableData;
+                }
+            }
 
             // Kiểm tra xem đây có còn là yêu cầu mới nhất không
             if (requestId !== lastRequestId) return;
 
-            // Cập nhật các biến global một lần duy nhất
+            // Cập nhật các biến global
             currentGlobalData = newCurrentData;
             currentGlobalDataRange = { start: dateStr, end: endDateStr || dateStr };
             comparisonGlobalData = newComparisonData;
@@ -1431,16 +1721,6 @@ async function loadDashboardData(dateStr, endDateStr = null) {
         } catch (error) {
             console.error("Lỗi tải dữ liệu:", error);
             showLoading(false);
-            
-            if (error.message && error.message.includes("Missing or insufficient permissions")) {
-                const errInfo = {
-                    error: error.message,
-                    operationType: 'get',
-                    path: 'gate_statistics_or_cable_operations',
-                    authInfo: { userId: currentUser?.uid }
-                };
-                console.error('Firestore Error: ', JSON.stringify(errInfo));
-            }
         }
     })();
     await dashboardDataPromise;
@@ -2539,14 +2819,14 @@ document.querySelectorAll('input[name="taskforce"]').forEach(cb => {
 updateDownloadButtonVisibility();
 // --- CABLE CONFIG LOGIC ---
 const DEFAULT_CABLES = [
-    { id: '1', name: 'Tuyến 1', length: 1000, maxCabins: 50, maxSpeed: 5, maxCapacity: 2000, downtime: 0, enabled: true },
-    { id: '2', name: 'Tuyến 2', length: 1200, maxCabins: 60, maxSpeed: 5, maxCapacity: 2500, downtime: 0, enabled: true },
-    { id: '3', name: 'Tuyến 3', length: 1500, maxCabins: 70, maxSpeed: 6, maxCapacity: 3000, downtime: 0, enabled: true },
-    { id: '4', name: 'Tuyến 4', length: 1100, maxCabins: 55, maxSpeed: 5, maxCapacity: 2200, downtime: 0, enabled: true },
-    { id: '5', name: 'Tuyến 5', length: 1300, maxCabins: 65, maxSpeed: 6, maxCapacity: 2800, downtime: 0, enabled: true },
-    { id: '6', name: 'Tuyến 6', length: 1400, maxCabins: 68, maxSpeed: 6, maxCapacity: 2900, downtime: 0, enabled: true },
-    { id: '8', name: 'Tuyến 8', length: 1600, maxCabins: 75, maxSpeed: 7, maxCapacity: 3500, downtime: 0, enabled: true },
-    { id: '9', name: 'Tuyến 9', length: 1700, maxCabins: 80, maxSpeed: 7, maxCapacity: 4000, downtime: 0, enabled: true }
+    { id: '1', name: 'Tuyến 1', length: 1000, maxCabins: 50, maxSpeed: 5, maxCapacity: 2000, stdOperatingTime: 12, downtime: 0, enabled: true },
+    { id: '2', name: 'Tuyến 2', length: 1200, maxCabins: 60, maxSpeed: 5, maxCapacity: 2500, stdOperatingTime: 12, downtime: 0, enabled: true },
+    { id: '3', name: 'Tuyến 3', length: 1500, maxCabins: 70, maxSpeed: 6, maxCapacity: 3000, stdOperatingTime: 12, downtime: 0, enabled: true },
+    { id: '4', name: 'Tuyến 4', length: 1100, maxCabins: 55, maxSpeed: 5, maxCapacity: 2200, stdOperatingTime: 12, downtime: 0, enabled: true },
+    { id: '5', name: 'Tuyến 5', length: 1300, maxCabins: 65, maxSpeed: 6, maxCapacity: 2800, stdOperatingTime: 12, downtime: 0, enabled: true },
+    { id: '6', name: 'Tuyến 6', length: 1400, maxCabins: 68, maxSpeed: 6, maxCapacity: 2900, stdOperatingTime: 12, downtime: 0, enabled: true },
+    { id: '8', name: 'Tuyến 8', length: 1600, maxCabins: 75, maxSpeed: 7, maxCapacity: 3500, stdOperatingTime: 12, downtime: 0, enabled: true },
+    { id: '9', name: 'Tuyến 9', length: 1700, maxCabins: 80, maxSpeed: 7, maxCapacity: 4000, stdOperatingTime: 12, downtime: 0, enabled: true }
 ];
 
 let editingCableIndices = new Set();
@@ -2642,6 +2922,7 @@ function renderCableConfigs() {
             <td class="py-3"><input type="number" ${disabledAttr} class="${inputNumClass}" value="${cable.maxCabins}" onchange="updateCableConfig(${index}, 'maxCabins', this.value)"></td>
             <td class="py-3"><input type="number" ${disabledAttr} class="${inputNumClass}" value="${cable.maxSpeed}" onchange="updateCableConfig(${index}, 'maxSpeed', this.value)"></td>
             <td class="py-3"><input type="number" ${disabledAttr} class="${inputNumClass}" value="${cable.maxCapacity}" onchange="updateCableConfig(${index}, 'maxCapacity', this.value)"></td>
+            <td class="py-3"><input type="number" ${disabledAttr} class="${inputNumClass}" value="${cable.stdOperatingTime || 12}" onchange="updateCableConfig(${index}, 'stdOperatingTime', this.value)"></td>
             <td class="py-3"><input type="number" ${disabledAttr} class="${inputNumClass}" value="${cable.downtime || 0}" onchange="updateCableConfig(${index}, 'downtime', this.value)"></td>
             <td class="py-3">
                 <label class="relative inline-flex items-center ${isAdmin ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}">
@@ -2749,15 +3030,26 @@ async function checkOEEConfigStatus(date) {
     }
 
     try {
-        const docRef = doc(db, 'cable_operations', date);
-        const docSnap = await getDoc(docRef);
+        let opData = null;
+        
+        // --- KIỂM TRA TRONG CACHE TRƯỚC ---
+        if (firestoreCache.cableOps[date]) {
+            opData = firestoreCache.cableOps[date];
+        } else {
+            const docRef = doc(db, 'cable_operations', date);
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+                opData = docSnap.data();
+                firestoreCache.cableOps[date] = opData; // Cất vào cache
+            }
+        }
 
         statusBadge.classList.remove('hidden');
-        if (docSnap.exists()) {
+        if (opData) {
             statusBadge.textContent = 'Đã có dữ liệu';
             statusBadge.classList.add('bg-emerald-100', 'text-emerald-700');
             if (deleteBtn) deleteBtn.classList.remove('hidden');
-            return docSnap.data().cableData;
+            return opData.cableData;
         } else {
             statusBadge.textContent = 'Chưa có dữ liệu';
             statusBadge.classList.add('bg-amber-100', 'text-amber-700');
@@ -2808,9 +3100,16 @@ async function saveOEEConfig() {
                 }
             }
 
+            const nominalHours = parseFloat(document.getElementById(`oee-nominal-hours-${cableIdx}`)?.value) || 12;
+            const actualHours = parseFloat(document.getElementById(`oee-actual-hours-${cableIdx}`)?.value) || 0;
+            const waitTime = parseFloat(document.getElementById(`oee-wait-time-${cableIdx}`)?.value) || 0;
+
             cableData[cable.id] = {
                 active: toggle ? toggle.checked : true,
-                segments: segments
+                segments: segments,
+                nominalHours: nominalHours,
+                actualHours: actualHours,
+                waitTime: waitTime
             };
         });
 
@@ -2819,6 +3118,9 @@ async function saveOEEConfig() {
             cableData: cableData,
             updatedAt: new Date().toISOString()
         });
+
+        // --- INVALIDATE CACHE ---
+        delete firestoreCache.cableOps[dateStr];
 
         // Clear cache since data changed
         const cacheKey = `oee_result_${dateStr}`;
@@ -2892,6 +3194,22 @@ async function renderOEECableList() {
             segments.push({ start: '', end: '', speed: '', cabins: '' });
         }
 
+        let calculatedActualHours = 0;
+        segments.forEach(seg => {
+            if (seg.start && seg.end) {
+                const [sH, sM] = seg.start.split(':').map(Number);
+                const [eH, eM] = seg.end.split(':').map(Number);
+                let diff = (eH * 60 + eM) - (sH * 60 + sM);
+                if (diff > 0) {
+                    calculatedActualHours += diff;
+                }
+            }
+        });
+        
+        const nominalHours = saved?.nominalHours || cable.stdOperatingTime || 12;
+        const actualHours = saved?.actualHours || (calculatedActualHours / 60).toFixed(2);
+        const waitTime = saved?.waitTime || '';
+
         const card = document.createElement('div');
         card.className = 'bg-white rounded-xl p-5 border border-slate-200 shadow-sm';
         
@@ -2949,6 +3267,20 @@ async function renderOEECableList() {
                     </tbody>
                 </table>
             </div>
+            <div class="mt-4 space-y-3 border-t border-slate-100 pt-4">
+                <div class="flex items-center justify-between">
+                    <label class="text-xs font-medium text-slate-600">Giờ vận hành định mức (h)</label>
+                    <input type="number" id="oee-nominal-hours-${cableIdx}" class="w-20 border border-slate-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-indigo-500 outline-none" value="${nominalHours}">
+                </div>
+                <div class="flex items-center justify-between">
+                    <label class="text-xs font-medium text-slate-600">Giờ mở cửa thực tế (h)</label>
+                    <input type="number" id="oee-actual-hours-${cableIdx}" class="w-20 border border-slate-200 bg-slate-50 rounded px-2 py-1 text-xs text-right outline-none cursor-not-allowed" value="${actualHours}" readonly title="Tự động tính toán từ các khung giờ bên trên">
+                </div>
+                <div class="flex items-center justify-between">
+                    <label class="text-xs font-medium text-slate-600">Thời gian chờ TB (phút)</label>
+                    <input type="number" id="oee-wait-time-${cableIdx}" class="w-20 border border-slate-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-indigo-500 outline-none" value="${waitTime}" placeholder="VD: 15">
+                </div>
+            </div>
         `;
         container.appendChild(card);
     });
@@ -2971,6 +3303,26 @@ window.updateRowCapacity = function(cableIdx, segIdx) {
         display.textContent = capacity.toLocaleString();
     } else {
         display.textContent = '-';
+    }
+
+    // Tự động tính toán lại Giờ mở cửa thực tế
+    let totalMinutes = 0;
+    for (let i = 0; i < 5; i++) {
+        const startEl = document.getElementById(`oee-start-${cableIdx}-${i}`);
+        const endEl = document.getElementById(`oee-end-${cableIdx}-${i}`);
+        if (startEl && endEl && startEl.value && endEl.value) {
+            const [sH, sM] = startEl.value.split(':').map(Number);
+            const [eH, eM] = endEl.value.split(':').map(Number);
+            let diff = (eH * 60 + eM) - (sH * 60 + sM);
+            if (diff > 0) {
+                totalMinutes += diff;
+            }
+        }
+    }
+    
+    const actualHoursEl = document.getElementById(`oee-actual-hours-${cableIdx}`);
+    if (actualHoursEl) {
+        actualHoursEl.value = (totalMinutes / 60).toFixed(2);
     }
 };
 
@@ -3017,18 +3369,7 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
         let oeeSummary = [];
 
         let tableHtml = `
-            <div class="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
-                <h4 class="font-bold text-slate-800 mb-4">Kết quả OEE theo giờ - Ngày ${dateStr}</h4>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left border-collapse min-w-[800px]">
-                        <thead>
-                            <tr class="border-b border-slate-200 text-sm text-slate-500">
-                                <th class="pb-3 font-medium sticky left-0 bg-white">Tuyến cáp</th>
-                                ${hours.map(h => `<th class="pb-3 font-medium text-center">${h}</th>`).join('')}
-                                <th class="pb-3 font-medium text-center text-indigo-600">TB Ngày</th>
-                            </tr>
-                        </thead>
-                        <tbody class="text-sm text-slate-700">
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
         `;
 
         activeCables.forEach((cable) => {
@@ -3061,26 +3402,30 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
                 }
             }
 
-            let totalOee = 0;
-            let validHoursCount = 0;
-            const hourlyOeeValues = [];
+            const nominalHours = parseFloat(document.getElementById(`oee-nominal-hours-${configIndex}`)?.value) || 12;
+            const actualHours = parseFloat(document.getElementById(`oee-actual-hours-${configIndex}`)?.value) || 0;
+            const waitTime = parseFloat(document.getElementById(`oee-wait-time-${configIndex}`)?.value) || 0;
 
-            const hourlyHtml = hours.map(h => {
+            // 1. Availability (A)
+            let A = 0;
+            if (nominalHours > 0) {
+                A = (actualHours / nominalHours) * 100;
+            }
+            if (A > 100) A = 100;
+
+            // 2. Performance (P)
+            let totalActual = 0;
+            let totalMaxCapacity = 0;
+
+            hours.forEach(h => {
                 const hourInt = parseInt(h.split(':')[0]);
                 const hourStart = `${hourInt.toString().padStart(2, '0')}:00`;
                 
-                // Tìm segment phù hợp cho khung giờ này
                 const activeSeg = segments.find(s => hourStart >= s.start && hourStart < s.end);
-                
-                if (!activeSeg || !activeSeg.start || !activeSeg.end) {
-                    return `<td class="py-3 text-center text-slate-300">Đóng</td>`;
-                }
+                if (!activeSeg || !activeSeg.start || !activeSeg.end) return;
 
-                // Tính công suất thực tế dựa trên cấu hình segment
                 const capacityRatio = (activeSeg.cabins / cable.maxCabins) * (activeSeg.speed / cable.maxSpeed);
                 
-                // Trừ downtime định mức (phút) khỏi 60 phút của 1 giờ
-                // Phân bổ downtime đều cho tổng thời gian hoạt động
                 const totalOperatingMinutes = segments.reduce((acc, s) => {
                     if (!s.start || !s.end) return acc;
                     const [sH, sM] = s.start.split(':').map(Number);
@@ -3095,7 +3440,6 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
                 
                 let actualInHour = 0;
                 if (gateData && gateData.hourlyData) {
-                    // Gom nhóm 30p thành 1h
                     const bucket1 = `${hourInt.toString().padStart(2, '0')}:00 - ${hourInt.toString().padStart(2, '0')}:30`;
                     const bucket2 = `${hourInt.toString().padStart(2, '0')}:30 - ${(hourInt + 1).toString().padStart(2, '0')}:00`;
                     
@@ -3107,41 +3451,91 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
                     }
                 }
 
-                let oee = 0;
-                if (currentMaxCapacity > 0) {
-                    oee = (actualInHour / currentMaxCapacity) * 100;
-                }
-                if (oee > 100) oee = 100; // Cap at 100%
+                totalActual += actualInHour;
+                totalMaxCapacity += currentMaxCapacity;
+            });
 
-                totalOee += oee;
-                validHoursCount++;
-                hourlyOeeValues.push(oee.toFixed(1));
+            let P = 0;
+            if (totalMaxCapacity > 0) {
+                P = (totalActual / totalMaxCapacity) * 100;
+            }
+            if (P > 100) P = 100;
 
-                const colorClass = oee >= 85 ? 'text-emerald-600 font-medium' : (oee >= 75 ? 'text-amber-600' : 'text-rose-600');
-                return `<td class="py-3 text-center ${colorClass}">${oee.toFixed(1)}%</td>`;
-            }).join('');
+            // 3. Quality (Q)
+            let Q = 100;
+            if (waitTime > 15) {
+                Q = (15 / waitTime) * 100;
+            }
 
-            const avgOee = validHoursCount > 0 ? (totalOee / validHoursCount).toFixed(1) : '0.0';
-            oeeSummary.push({ name: cable.name, avgOee, hourly: hourlyOeeValues });
+            // Total OEE
+            const OEE = (A / 100) * (P / 100) * (Q / 100) * 100;
+            
+            oeeSummary.push({ 
+                name: cable.name, 
+                avgOee: OEE.toFixed(1),
+                availability: A.toFixed(1),
+                performance: P.toFixed(1),
+                quality: Q.toFixed(1)
+            });
+
+            const oeeColor = OEE < 60 ? 'text-rose-600' : (OEE >= 85 ? 'text-emerald-600' : 'text-amber-500');
+            const oeeBg = OEE < 60 ? 'bg-rose-50 border-rose-200' : (OEE >= 85 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200');
 
             tableHtml += `
-                <tr class="border-b border-slate-100 hover:bg-slate-50">
-                    <td class="py-3 font-medium sticky left-0 bg-white group-hover:bg-slate-50">${cable.name}</td>
-                    ${hourlyHtml}
-                    <td class="py-3 text-center font-bold text-indigo-600">${avgOee}%</td>
-                </tr>
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="${oeeBg} border-b p-6 flex flex-col md:flex-row items-center justify-between gap-4">
+                        <div>
+                            <h4 class="text-xl font-bold text-slate-800">${cable.name}</h4>
+                            <p class="text-sm text-slate-600 mt-1">Chỉ số hiệu quả thiết bị tổng thể</p>
+                        </div>
+                        <div class="text-center bg-white px-6 py-3 rounded-xl shadow-sm border border-white/50">
+                            <div class="text-4xl font-black ${oeeColor}">${OEE.toFixed(1)}%</div>
+                            <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mt-1">Tổng OEE</div>
+                        </div>
+                    </div>
+                    
+                    <div class="p-6 space-y-6">
+                        <!-- Availability -->
+                        <div>
+                            <div class="flex justify-between items-end mb-2">
+                                <span class="text-sm font-bold text-slate-700">Availability (A) - Mức độ sẵn sàng</span>
+                                <span class="text-sm font-bold text-indigo-600">${A.toFixed(1)}%</span>
+                            </div>
+                            <div class="w-full bg-slate-100 rounded-full h-2.5">
+                                <div class="bg-indigo-500 h-2.5 rounded-full" style="width: ${A.toFixed(1)}%"></div>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-2">Giờ mở cửa: ${actualHours}h / Định mức: ${nominalHours}h</p>
+                        </div>
+                        
+                        <!-- Performance -->
+                        <div>
+                            <div class="flex justify-between items-end mb-2">
+                                <span class="text-sm font-bold text-slate-700">Performance (P) - Hiệu suất</span>
+                                <span class="text-sm font-bold text-blue-600">${P.toFixed(1)}%</span>
+                            </div>
+                            <div class="w-full bg-slate-100 rounded-full h-2.5">
+                                <div class="bg-blue-500 h-2.5 rounded-full" style="width: ${P.toFixed(1)}%"></div>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-2">Sản lượng thực tế: ${totalActual.toLocaleString()} / Tối đa: ${Math.round(totalMaxCapacity).toLocaleString()}</p>
+                        </div>
+                        
+                        <!-- Quality -->
+                        <div>
+                            <div class="flex justify-between items-end mb-2">
+                                <span class="text-sm font-bold text-slate-700">Quality (Q) - Chất lượng dịch vụ</span>
+                                <span class="text-sm font-bold text-emerald-600">${Q.toFixed(1)}%</span>
+                            </div>
+                            <div class="w-full bg-slate-100 rounded-full h-2.5">
+                                <div class="bg-emerald-500 h-2.5 rounded-full" style="width: ${Q.toFixed(1)}%"></div>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-2">Thời gian chờ TB: ${waitTime} phút (Chuẩn: ≤ 15 phút)</p>
+                        </div>
+                    </div>
+                </div>
             `;
         });
 
         tableHtml += `
-                        </tbody>
-                    </table>
-                </div>
-                <div class="mt-4 flex items-center gap-4 text-xs text-slate-500">
-                    <div class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-emerald-500"></span> Tốt (≥ 85%)</div>
-                    <div class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-amber-500"></span> Khá (75% - 84%)</div>
-                    <div class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-rose-500"></span> Cần cải thiện (< 75%)</div>
-                </div>
             </div>
         `;
 
@@ -3248,6 +3642,7 @@ function initReportFilters() {
     const dateEndInput = document.getElementById('global-date-end');
     const viewModeSelect = document.getElementById('view-mode');
 
+    /*
     if (dateStartInput && dateEndInput && viewModeSelect && !dateStartInput.value && !dateEndInput.value) {
         const end = new Date();
         const start = new Date();
@@ -3261,6 +3656,7 @@ function initReportFilters() {
         viewModeSelect.dispatchEvent(new Event('change'));
         handleDateChange();
     }
+    */
 
     // Auto generate report on first load if not already generated
     if (document.getElementById('report-content').classList.contains('hidden')) {
@@ -3316,29 +3712,50 @@ async function generateReport() {
     }
     
     try {
-        // Fetch Traffic Data
+        // Fetch Traffic Data (Sử dụng Cache nếu có)
         let trafficData = [];
-        if (currentGlobalDataRange.start === startDate && currentGlobalDataRange.end === endDate) {
-            trafficData = currentGlobalData;
-        } else {
-            const qTraffic = query(collection(db, 'gate_statistics'), 
-                      where('date', '>=', startDate), 
-                      where('date', '<=', endDate),
-                      orderBy('date', 'asc'));
-            const trafficSnap = await getDocs(qTraffic);
-            trafficSnap.forEach(doc => trafficData.push(doc.data()));
+        
+        // Tạo danh sách các ngày trong khoảng
+        const dates = [];
+        let curr = new Date(startDate);
+        const end = new Date(endDate);
+        while (curr <= end) {
+            dates.push(curr.toISOString().split('T')[0]);
+            curr.setDate(curr.getDate() + 1);
         }
 
-        // Fetch OEE Data
-        const qOee = query(collection(db, 'cable_operations'), 
-                  where('date', '>=', startDate), 
-                  where('date', '<=', endDate),
-                  orderBy('date', 'asc'));
-        const oeeSnap = await getDocs(qOee);
+        for (const d of dates) {
+            const dayData = await fetchDayData(d);
+            if (dayData) {
+                Object.entries(dayData.gatesData).forEach(([gateName, data]) => {
+                    trafficData.push({
+                        date: d,
+                        gateName: gateName,
+                        totalPassengers: data.total,
+                        hourlyData: data.hourly,
+                        laneData: data.lanes
+                    });
+                });
+            }
+        }
+
+        // Fetch OEE Data (Sử dụng Cache Persistent)
         const oeeData = {};
-        oeeSnap.forEach(doc => {
-            oeeData[doc.data().date] = doc.data().cableData;
-        });
+        for (const d of dates) {
+            if (firestoreCache.cableOps[d]) {
+                oeeData[d] = firestoreCache.cableOps[d].cableData;
+            } else {
+                const opDocRef = doc(db, 'cable_operations', d);
+                const opDocSnap = await getDoc(opDocRef);
+                if (opDocSnap.exists()) {
+                    const opData = opDocSnap.data();
+                    const update = {};
+                    update[d] = opData;
+                    saveToPersistentCache('cableOps', update);
+                    oeeData[d] = opData.cableData;
+                }
+            }
+        }
 
         processReportData(trafficData, oeeData, target, type, startDate, endDate);
         
@@ -3723,6 +4140,14 @@ setTimeout(() => {
                 showLoading(true, 'Đang xóa dữ liệu...');
                 try {
                     await deleteDoc(doc(db, 'cable_operations', dateStr));
+                    
+                    // --- INVALIDATE CACHE ---
+                    delete firestoreCache.cableOps[dateStr];
+                    if (firestoreCache.latestDate === dateStr) {
+                        firestoreCache.latestDate = null;
+                        sessionStorage.removeItem('cache_latestDate');
+                    }
+                    
                     showNotification('Thành công', 'Đã xóa dữ liệu vận hành', 'success');
                     
                     // Clear cached OEE result

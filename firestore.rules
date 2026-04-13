@@ -83,7 +83,20 @@ service cloud.firestore {
              isValidTimestampString(data.updatedAt);
     }
 
+    function isValidGateStatisticDaily(data) {
+      return hasOnlyAllowedFields(['date', 'gatesData', 'updatedAt']) &&
+             hasRequiredFields(['date', 'gatesData', 'updatedAt']) &&
+             isValidDateString(data.date) &&
+             data.gatesData is map &&
+             isValidTimestampString(data.updatedAt);
+    }
+
     match /gate_statistics/{statId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /gate_statistics_daily/{date} {
       allow read: if true;
       allow create, update, delete: if isAdmin();
     }
