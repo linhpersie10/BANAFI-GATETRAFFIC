@@ -481,57 +481,20 @@ function populateWeekSelector() {
 }
 
 async function findLatestDate() {
-    // Kiểm tra session cache trước
-    if (firestoreCache.latestDate) {
-        console.log("Using cached latest date:", firestoreCache.latestDate);
-        return firestoreCache.latestDate;
-    }
-
+    if (firestoreCache.latestDate) return firestoreCache.latestDate;
     try {
-        console.log("Searching for latest date with data...");
-        
-        // 1. Check gate_statistics_daily (New collection)
-        const qNew = query(collection(db, 'gate_statistics_daily'), orderBy('date', 'desc'), limit(1));
-        const snapNew = await getDocs(qNew).catch(err => {
-            console.warn("Error querying gate_statistics_daily:", err);
-            return { empty: true };
-        });
-
-        // 2. Check gate_statistics (Old collection)
-        const qOld = query(collection(db, 'gate_statistics'), orderBy('date', 'desc'), limit(1));
-        const snapOld = await getDocs(qOld).catch(err => {
-            console.warn("Error querying gate_statistics:", err);
-            return { empty: true };
-        });
-        
-        // 3. Check cable_operations
-        const qCable = query(collection(db, 'cable_operations'), orderBy('date', 'desc'), limit(1));
-        const snapCable = await getDocs(qCable).catch(err => {
-            console.warn("Error querying cable_operations:", err);
-            return { empty: true };
-        });
-        
-        let dates = [];
-        if (snapNew && !snapNew.empty) dates.push(snapNew.docs[0].data().date);
-        if (snapOld && !snapOld.empty) dates.push(snapOld.docs[0].data().date);
-        if (snapCable && !snapCable.empty) dates.push(snapCable.docs[0].data().date);
-        
-        if (dates.length > 0) {
-            dates.sort((a, b) => b.localeCompare(a));
-            const latest = dates[0];
-            console.log("Latest date found across all collections:", latest);
-            
+        const q = query(collection(db, 'gate_statistics_daily'), orderBy('date', 'desc'), limit(1));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+            const latest = snap.docs[0].data().date;
             firestoreCache.latestDate = latest;
             sessionStorage.setItem('cache_latestDate', latest);
             return latest;
         }
     } catch (error) {
-        console.error("Lỗi nghiêm trọng khi tìm ngày mới nhất:", error);
+        console.error("Lỗi tìm ngày mới nhất:", error);
     }
-    
-    const defaultDate = '2026-03-28';
-    console.log("No data found in any collection, using default date:", defaultDate);
-    return defaultDate;
+    return new Date().toISOString().split('T')[0];
 }
 
 // --- AUTHENTICATION ---
@@ -1553,61 +1516,43 @@ function handleDateChange() {
 }
 
 async function fetchDayData(dateStr) {
-    // 1. Kiểm tra Cache Memory
-    if (firestoreCache.gateStats[dateStr]) {
+    if (firestoreCache.gateStats[dateStr] && firestoreCache.gateStats[dateStr] !== 'EMPTY') {
         return firestoreCache.gateStats[dateStr];
     }
 
     try {
-        // 2. Thử tải từ Collection mới (gate_statistics_daily)
         const docRef = doc(db, 'gate_statistics_daily', dateStr);
         const docSnap = await getDoc(docRef);
         
         if (docSnap.exists()) {
             const dayData = docSnap.data();
-            const update = {};
-            update[dateStr] = dayData;
-            saveToPersistentCache('gateStats', update);
+            firestoreCache.gateStats[dateStr] = dayData;
+            saveToPersistentCache('gateStats', { [dateStr]: dayData });
             return dayData;
         }
 
-        // 3. Nếu không có, thử tải từ Collection cũ (gate_statistics) - Backward Compatibility
-        console.log(`Data not found in new collection for ${dateStr}, checking old collection...`);
+        // Backward Compatibility
         const qOld = query(collection(db, 'gate_statistics'), where('date', '==', dateStr));
         const oldSnap = await getDocs(qOld);
         
         if (!oldSnap.empty) {
             const gatesData = {};
             let latestUpdate = '';
-            
             oldSnap.forEach(d => {
                 const data = d.data();
-                gatesData[data.gateName] = {
-                    total: data.totalPassengers,
-                    hourly: data.hourlyData,
-                    lanes: data.laneData
-                };
+                gatesData[data.gateName] = { total: data.totalPassengers, hourly: data.hourlyData, lanes: data.laneData };
                 if (data.updatedAt > latestUpdate) latestUpdate = data.updatedAt;
             });
-            
-            const aggregatedDayData = {
-                date: dateStr,
-                updatedAt: latestUpdate || new Date().toISOString(),
-                gatesData: gatesData
-            };
-            
-            // Lưu vào cache để lần sau không phải query collection cũ nữa
-            const update = {};
-            update[dateStr] = aggregatedDayData;
-            saveToPersistentCache('gateStats', update);
-            
+            const aggregatedDayData = { date: dateStr, updatedAt: latestUpdate || new Date().toISOString(), gatesData: gatesData };
+            firestoreCache.gateStats[dateStr] = aggregatedDayData;
+            saveToPersistentCache('gateStats', { [dateStr]: aggregatedDayData });
             return aggregatedDayData;
         }
+        
+        firestoreCache.gateStats[dateStr] = 'EMPTY';
     } catch (error) {
-        console.error(`Error fetching data for ${dateStr}:`, error);
         handleFirestoreError(error, OperationType.GET, `gate_statistics_daily/${dateStr}`);
     }
-    
     return null;
 }
 
@@ -3081,48 +3026,33 @@ async function saveOEEConfig() {
         const cableData = {};
 
         configs.forEach((cable, cableIdx) => {
-            if (cable.enabled === false) return; // Skip disabled cables
-
+            if (cable.enabled === false) return;
             const toggle = document.getElementById(`oee-toggle-${cableIdx}`);
             const segments = [];
-            
             for (let segIdx = 0; segIdx < 5; segIdx++) {
                 const startEl = document.getElementById(`oee-start-${cableIdx}-${segIdx}`);
-                if (!startEl) continue; // Skip if not rendered
-
+                if (!startEl) continue;
                 const start = startEl.value;
                 const end = document.getElementById(`oee-end-${cableIdx}-${segIdx}`).value;
                 const speed = parseFloat(document.getElementById(`oee-speed-${cableIdx}-${segIdx}`).value);
                 const cabins = parseInt(document.getElementById(`oee-cabins-${cableIdx}-${segIdx}`).value);
-                
                 if (start || end || !isNaN(speed) || !isNaN(cabins)) {
                     segments.push({ start, end, speed, cabins });
                 }
             }
-
             const nominalHours = parseFloat(document.getElementById(`oee-nominal-hours-${cableIdx}`)?.value) || 12;
             const actualHours = parseFloat(document.getElementById(`oee-actual-hours-${cableIdx}`)?.value) || 0;
             const waitTime = parseFloat(document.getElementById(`oee-wait-time-${cableIdx}`)?.value) || 0;
-
-            cableData[cable.id] = {
-                active: toggle ? toggle.checked : true,
-                segments: segments,
-                nominalHours: nominalHours,
-                actualHours: actualHours,
-                waitTime: waitTime
-            };
+            cableData[cable.id] = { active: toggle ? toggle.checked : true, segments, nominalHours, actualHours, waitTime };
         });
 
-        await setDoc(doc(db, 'cable_operations', dateStr), {
-            date: dateStr,
-            cableData: cableData,
-            updatedAt: new Date().toISOString()
-        });
+        const newConfigData = { date: dateStr, cableData, updatedAt: new Date().toISOString() };
+        await setDoc(doc(db, 'cable_operations', dateStr), newConfigData);
 
-        // --- INVALIDATE CACHE ---
-        delete firestoreCache.cableOps[dateStr];
-
-        // Clear cache since data changed
+        // Update local cache manually
+        firestoreCache.cableOps[dateStr] = newConfigData;
+        saveToPersistentCache('cableOps', { [dateStr]: newConfigData });
+        
         const cacheKey = `oee_result_${dateStr}`;
         localStorage.removeItem(cacheKey);
         document.getElementById('oee-results-container')?.classList.add('hidden');
@@ -3333,20 +3263,14 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
         return;
     }
     
-    if (!db) return;
     showLoading(true, 'Đang tính toán OEE...');
 
     try {
-        // 1. Tải dữ liệu thực tế từ Firestore
-        const q = query(collection(db, 'gate_statistics'), where('date', '==', dateStr));
-        const snapshot = await getDocs(q);
-        const actualData = {};
-        snapshot.forEach(doc => {
-            const data = doc.data();
-            actualData[data.gateName] = data;
-        });
+        // 1. Lấy dữ liệu thực tế từ CACHE (Không gọi Firebase)
+        const dayData = firestoreCache.gateStats[dateStr];
+        const actualData = (dayData && dayData !== 'EMPTY') ? dayData.gatesData : {};
 
-        // 2. Lấy cấu hình tuyến cáp (chỉ những tuyến đang enable)
+        // 2. Lấy cấu hình tuyến cáp
         const allConfigs = getCableConfigs();
         const configs = allConfigs.filter(c => c.enabled !== false);
         const activeCables = configs.filter(cable => {
@@ -3362,201 +3286,89 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
         }
 
         const resultsContainer = document.getElementById('oee-results-container');
-        
-        // Giả lập khung giờ từ 8h đến 17h (hoặc lấy từ dữ liệu thực tế)
         const hours = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
-
         let oeeSummary = [];
-
-        let tableHtml = `
-            <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        `;
+        let tableHtml = `<div class="grid grid-cols-1 xl:grid-cols-2 gap-6">`;
 
         activeCables.forEach((cable) => {
-            // Find original index in configs to access correct DOM elements
             const configIndex = allConfigs.findIndex(c => c.id === cable.id);
-            
-            // Map Cable Name to Gate Name based on user requirements
-            const CABLE_TO_GATE_MAP = {
-                'Tuyến 1': 'Gate 1',
-                'Tuyến 3': 'Gate 5',
-                'Tuyến 4': 'Gate 9',
-                'Tuyến 6': 'Gate 15',
-                'Tuyến 8': 'Gate 19'
-            };
+            const CABLE_TO_GATE_MAP = { 'Tuyến 1': 'Gate 1', 'Tuyến 3': 'Gate 5', 'Tuyến 4': 'Gate 9', 'Tuyến 6': 'Gate 15', 'Tuyến 8': 'Gate 19' };
             const gateName = CABLE_TO_GATE_MAP[cable.name] || cable.name;
             const gateData = actualData[gateName];
             
-            // Lấy các segments từ UI
             const segments = [];
             for (let segIdx = 0; segIdx < 5; segIdx++) {
                 const startEl = document.getElementById(`oee-start-${configIndex}-${segIdx}`);
                 if (!startEl) continue;
-                
                 const start = startEl.value;
                 const end = document.getElementById(`oee-end-${configIndex}-${segIdx}`).value;
                 const speed = parseFloat(document.getElementById(`oee-speed-${configIndex}-${segIdx}`).value);
                 const cabins = parseInt(document.getElementById(`oee-cabins-${configIndex}-${segIdx}`).value);
-                if (start && end && !isNaN(speed) && !isNaN(cabins)) {
-                    segments.push({ start, end, speed, cabins });
-                }
+                if (start && end && !isNaN(speed) && !isNaN(cabins)) segments.push({ start, end, speed, cabins });
             }
 
             const nominalHours = parseFloat(document.getElementById(`oee-nominal-hours-${configIndex}`)?.value) || 12;
             const actualHours = parseFloat(document.getElementById(`oee-actual-hours-${configIndex}`)?.value) || 0;
             const waitTime = parseFloat(document.getElementById(`oee-wait-time-${configIndex}`)?.value) || 0;
 
-            // 1. Availability (A)
-            let A = 0;
-            if (nominalHours > 0) {
-                A = (actualHours / nominalHours) * 100;
-            }
-            if (A > 100) A = 100;
-
-            // 2. Performance (P)
-            let totalActual = 0;
-            let totalMaxCapacity = 0;
+            let A = nominalHours > 0 ? Math.min(100, (actualHours / nominalHours) * 100) : 0;
+            let totalActual = 0, totalMaxCapacity = 0;
 
             hours.forEach(h => {
                 const hourInt = parseInt(h.split(':')[0]);
                 const hourStart = `${hourInt.toString().padStart(2, '0')}:00`;
-                
                 const activeSeg = segments.find(s => hourStart >= s.start && hourStart < s.end);
-                if (!activeSeg || !activeSeg.start || !activeSeg.end) return;
+                if (!activeSeg) return;
 
                 const capacityRatio = (activeSeg.cabins / cable.maxCabins) * (activeSeg.speed / cable.maxSpeed);
-                
                 const totalOperatingMinutes = segments.reduce((acc, s) => {
-                    if (!s.start || !s.end) return acc;
-                    const [sH, sM] = s.start.split(':').map(Number);
-                    const [eH, eM] = s.end.split(':').map(Number);
+                    const [sH, sM] = s.start.split(':').map(Number), [eH, eM] = s.end.split(':').map(Number);
                     return acc + ((eH * 60 + eM) - (sH * 60 + sM));
                 }, 0);
-                
                 const scheduledDowntimeInHour = totalOperatingMinutes > 0 ? (cable.downtime || 0) * (60 / totalOperatingMinutes) : 0;
                 const effectiveMinutesInHour = Math.max(0, 60 - scheduledDowntimeInHour);
-                
                 const currentMaxCapacity = (cable.maxCapacity * capacityRatio) * (effectiveMinutesInHour / 60);
                 
                 let actualInHour = 0;
                 if (gateData && gateData.hourlyData) {
-                    const bucket1 = `${hourInt.toString().padStart(2, '0')}:00 - ${hourInt.toString().padStart(2, '0')}:30`;
-                    const bucket2 = `${hourInt.toString().padStart(2, '0')}:30 - ${(hourInt + 1).toString().padStart(2, '0')}:00`;
-                    
-                    if (gateData.hourlyData[bucket1]) {
-                        actualInHour += Object.values(gateData.hourlyData[bucket1]).reduce((s, c) => s + Number(c), 0);
-                    }
-                    if (gateData.hourlyData[bucket2]) {
-                        actualInHour += Object.values(gateData.hourlyData[bucket2]).reduce((s, c) => s + Number(c), 0);
-                    }
+                    const b1 = `${hourInt.toString().padStart(2, '0')}:00 - ${hourInt.toString().padStart(2, '0')}:30`;
+                    const b2 = `${hourInt.toString().padStart(2, '0')}:30 - ${(hourInt + 1).toString().padStart(2, '0')}:00`;
+                    if (gateData.hourlyData[b1]) actualInHour += Object.values(gateData.hourlyData[b1]).reduce((s, c) => s + Number(c), 0);
+                    if (gateData.hourlyData[b2]) actualInHour += Object.values(gateData.hourlyData[b2]).reduce((s, c) => s + Number(c), 0);
                 }
-
                 totalActual += actualInHour;
                 totalMaxCapacity += currentMaxCapacity;
             });
 
-            let P = 0;
-            if (totalMaxCapacity > 0) {
-                P = (totalActual / totalMaxCapacity) * 100;
-            }
-            if (P > 100) P = 100;
-
-            // 3. Quality (Q)
-            let Q = 100;
-            if (waitTime > 15) {
-                Q = (15 / waitTime) * 100;
-            }
-
-            // Total OEE
+            let P = totalMaxCapacity > 0 ? Math.min(100, (totalActual / totalMaxCapacity) * 100) : 0;
+            let Q = waitTime > 15 ? (15 / waitTime) * 100 : 100;
             const OEE = (A / 100) * (P / 100) * (Q / 100) * 100;
             
-            oeeSummary.push({ 
-                name: cable.name, 
-                avgOee: OEE.toFixed(1),
-                availability: A.toFixed(1),
-                performance: P.toFixed(1),
-                quality: Q.toFixed(1)
-            });
-
+            oeeSummary.push({ name: cable.name, avgOee: OEE.toFixed(1), availability: A.toFixed(1), performance: P.toFixed(1), quality: Q.toFixed(1) });
             const oeeColor = OEE < 60 ? 'text-rose-600' : (OEE >= 85 ? 'text-emerald-600' : 'text-amber-500');
             const oeeBg = OEE < 60 ? 'bg-rose-50 border-rose-200' : (OEE >= 85 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200');
 
             tableHtml += `
                 <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                     <div class="${oeeBg} border-b p-6 flex flex-col md:flex-row items-center justify-between gap-4">
-                        <div>
-                            <h4 class="text-xl font-bold text-slate-800">${cable.name}</h4>
-                            <p class="text-sm text-slate-600 mt-1">Chỉ số hiệu quả thiết bị tổng thể</p>
-                        </div>
-                        <div class="text-center bg-white px-6 py-3 rounded-xl shadow-sm border border-white/50">
-                            <div class="text-4xl font-black ${oeeColor}">${OEE.toFixed(1)}%</div>
-                            <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mt-1">Tổng OEE</div>
-                        </div>
+                        <div><h4 class="text-xl font-bold text-slate-800">${cable.name}</h4><p class="text-sm text-slate-600 mt-1">Chỉ số hiệu quả thiết bị tổng thể</p></div>
+                        <div class="text-center bg-white px-6 py-3 rounded-xl shadow-sm border border-white/50"><div class="text-4xl font-black ${oeeColor}">${OEE.toFixed(1)}%</div><div class="text-xs font-bold text-slate-400 uppercase tracking-wider mt-1">Tổng OEE</div></div>
                     </div>
-                    
                     <div class="p-6 space-y-6">
-                        <!-- Availability -->
-                        <div>
-                            <div class="flex justify-between items-end mb-2">
-                                <span class="text-sm font-bold text-slate-700">Availability (A) - Mức độ sẵn sàng</span>
-                                <span class="text-sm font-bold text-indigo-600">${A.toFixed(1)}%</span>
-                            </div>
-                            <div class="w-full bg-slate-100 rounded-full h-2.5">
-                                <div class="bg-indigo-500 h-2.5 rounded-full" style="width: ${A.toFixed(1)}%"></div>
-                            </div>
-                            <p class="text-xs text-slate-500 mt-2">Giờ mở cửa: ${actualHours}h / Định mức: ${nominalHours}h</p>
-                        </div>
-                        
-                        <!-- Performance -->
-                        <div>
-                            <div class="flex justify-between items-end mb-2">
-                                <span class="text-sm font-bold text-slate-700">Performance (P) - Hiệu suất</span>
-                                <span class="text-sm font-bold text-blue-600">${P.toFixed(1)}%</span>
-                            </div>
-                            <div class="w-full bg-slate-100 rounded-full h-2.5">
-                                <div class="bg-blue-500 h-2.5 rounded-full" style="width: ${P.toFixed(1)}%"></div>
-                            </div>
-                            <p class="text-xs text-slate-500 mt-2">Sản lượng thực tế: ${totalActual.toLocaleString()} / Tối đa: ${Math.round(totalMaxCapacity).toLocaleString()}</p>
-                        </div>
-                        
-                        <!-- Quality -->
-                        <div>
-                            <div class="flex justify-between items-end mb-2">
-                                <span class="text-sm font-bold text-slate-700">Quality (Q) - Chất lượng dịch vụ</span>
-                                <span class="text-sm font-bold text-emerald-600">${Q.toFixed(1)}%</span>
-                            </div>
-                            <div class="w-full bg-slate-100 rounded-full h-2.5">
-                                <div class="bg-emerald-500 h-2.5 rounded-full" style="width: ${Q.toFixed(1)}%"></div>
-                            </div>
-                            <p class="text-xs text-slate-500 mt-2">Thời gian chờ TB: ${waitTime} phút (Chuẩn: ≤ 15 phút)</p>
-                        </div>
+                        <div><div class="flex justify-between items-end mb-2"><span class="text-sm font-bold text-slate-700">Availability (A)</span><span class="text-sm font-bold text-indigo-600">${A.toFixed(1)}%</span></div><div class="w-full bg-slate-100 rounded-full h-2.5"><div class="bg-indigo-500 h-2.5 rounded-full" style="width: ${A.toFixed(1)}%"></div></div></div>
+                        <div><div class="flex justify-between items-end mb-2"><span class="text-sm font-bold text-slate-700">Performance (P)</span><span class="text-sm font-bold text-blue-600">${P.toFixed(1)}%</span></div><div class="w-full bg-slate-100 rounded-full h-2.5"><div class="bg-blue-500 h-2.5 rounded-full" style="width: ${P.toFixed(1)}%"></div></div></div>
+                        <div><div class="flex justify-between items-end mb-2"><span class="text-sm font-bold text-slate-700">Quality (Q)</span><span class="text-sm font-bold text-emerald-600">${Q.toFixed(1)}%</span></div><div class="w-full bg-slate-100 rounded-full h-2.5"><div class="bg-emerald-500 h-2.5 rounded-full" style="width: ${Q.toFixed(1)}%"></div></div></div>
                     </div>
-                </div>
-            `;
+                </div>`;
         });
-
-        tableHtml += `
-            </div>
-        `;
-
+        tableHtml += `</div>`;
         resultsContainer.innerHTML = tableHtml;
         resultsContainer.classList.remove('hidden');
-
-        // 3. Gọi AI Suggestion
         await generateAISuggestions(oeeSummary, dateStr);
-
-        // Save to cache
-        const cacheKey = `oee_result_${dateStr}`;
-        const cacheData = {
-            tableHtml: tableHtml,
-            aiHtml: document.getElementById('ai-suggestion-content').innerHTML
-        };
-        localStorage.setItem(cacheKey, JSON.stringify(cacheData));
-
-        showNotification('Thành công', 'Đã tính toán OEE dựa trên dữ liệu thực tế', 'success');
+        localStorage.setItem(`oee_result_${dateStr}`, JSON.stringify({ tableHtml, aiHtml: document.getElementById('ai-suggestion-content').innerHTML }));
     } catch (error) {
         console.error("Lỗi tính toán OEE:", error);
-        showNotification('Lỗi', 'Không thể tính toán OEE. Vui lòng kiểm tra dữ liệu.', 'error');
+        showNotification('Lỗi', 'Có lỗi xảy ra khi tính toán OEE', 'error');
     } finally {
         showLoading(false);
     }
