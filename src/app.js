@@ -3266,8 +3266,8 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
     showLoading(true, 'Đang tính toán OEE...');
 
     try {
-        // 1. Lấy dữ liệu thực tế từ CACHE (Không gọi Firebase)
-        const dayData = firestoreCache.gateStats[dateStr];
+        // 1. Lấy dữ liệu thực tế từ CACHE hoặc Firestore
+        const dayData = await fetchDayData(dateStr);
         const actualData = (dayData && dayData !== 'EMPTY') ? dayData.gatesData : {};
 
         // 2. Lấy cấu hình tuyến cáp
@@ -3288,7 +3288,8 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
         const resultsContainer = document.getElementById('oee-results-container');
         const hours = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
         let oeeSummary = [];
-        let tableHtml = `<div class="grid grid-cols-1 xl:grid-cols-2 gap-6">`;
+        let hourlyTableData = [];
+        let tableHtml = `<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">`;
 
         activeCables.forEach((cable) => {
             const configIndex = allConfigs.findIndex(c => c.id === cable.id);
@@ -3313,12 +3314,17 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
 
             let A = nominalHours > 0 ? Math.min(100, (actualHours / nominalHours) * 100) : 0;
             let totalActual = 0, totalMaxCapacity = 0;
+            let hourlyOEEs = {};
 
             hours.forEach(h => {
                 const hourInt = parseInt(h.split(':')[0]);
                 const hourStart = `${hourInt.toString().padStart(2, '0')}:00`;
                 const activeSeg = segments.find(s => hourStart >= s.start && hourStart < s.end);
-                if (!activeSeg) return;
+                
+                if (!activeSeg) {
+                    hourlyOEEs[h] = 'Đóng';
+                    return;
+                }
 
                 const capacityRatio = (activeSeg.cabins / cable.maxCabins) * (activeSeg.speed / cable.maxSpeed);
                 const totalOperatingMinutes = segments.reduce((acc, s) => {
@@ -3330,14 +3336,21 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
                 const currentMaxCapacity = (cable.maxCapacity * capacityRatio) * (effectiveMinutesInHour / 60);
                 
                 let actualInHour = 0;
-                if (gateData && gateData.hourlyData) {
+                const hourlyData = gateData ? (gateData.hourly || gateData.hourlyData) : null;
+                if (hourlyData) {
                     const b1 = `${hourInt.toString().padStart(2, '0')}:00 - ${hourInt.toString().padStart(2, '0')}:30`;
                     const b2 = `${hourInt.toString().padStart(2, '0')}:30 - ${(hourInt + 1).toString().padStart(2, '0')}:00`;
-                    if (gateData.hourlyData[b1]) actualInHour += Object.values(gateData.hourlyData[b1]).reduce((s, c) => s + Number(c), 0);
-                    if (gateData.hourlyData[b2]) actualInHour += Object.values(gateData.hourlyData[b2]).reduce((s, c) => s + Number(c), 0);
+                    if (hourlyData[b1]) actualInHour += Object.values(hourlyData[b1]).reduce((s, c) => s + Number(c), 0);
+                    if (hourlyData[b2]) actualInHour += Object.values(hourlyData[b2]).reduce((s, c) => s + Number(c), 0);
                 }
                 totalActual += actualInHour;
                 totalMaxCapacity += currentMaxCapacity;
+
+                let hourlyP = currentMaxCapacity > 0 ? Math.min(100, (actualInHour / currentMaxCapacity) * 100) : 0;
+                let hourlyQ = waitTime > 15 ? (15 / waitTime) * 100 : 100;
+                let hourlyOEE = (100 / 100) * (hourlyP / 100) * (hourlyQ / 100) * 100; // A is 100% for active hour
+                
+                hourlyOEEs[h] = hourlyOEE.toFixed(1) + '%';
             });
 
             let P = totalMaxCapacity > 0 ? Math.min(100, (totalActual / totalMaxCapacity) * 100) : 0;
@@ -3345,23 +3358,67 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
             const OEE = (A / 100) * (P / 100) * (Q / 100) * 100;
             
             oeeSummary.push({ name: cable.name, avgOee: OEE.toFixed(1), availability: A.toFixed(1), performance: P.toFixed(1), quality: Q.toFixed(1) });
+            
+            hourlyTableData.push({
+                name: cable.name,
+                hourly: hourlyOEEs,
+                avg: OEE.toFixed(1) + '%'
+            });
+
             const oeeColor = OEE < 60 ? 'text-rose-600' : (OEE >= 85 ? 'text-emerald-600' : 'text-amber-500');
             const oeeBg = OEE < 60 ? 'bg-rose-50 border-rose-200' : (OEE >= 85 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200');
 
             tableHtml += `
-                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                    <div class="${oeeBg} border-b p-6 flex flex-col md:flex-row items-center justify-between gap-4">
-                        <div><h4 class="text-xl font-bold text-slate-800">${cable.name}</h4><p class="text-sm text-slate-600 mt-1">Chỉ số hiệu quả thiết bị tổng thể</p></div>
-                        <div class="text-center bg-white px-6 py-3 rounded-xl shadow-sm border border-white/50"><div class="text-4xl font-black ${oeeColor}">${OEE.toFixed(1)}%</div><div class="text-xs font-bold text-slate-400 uppercase tracking-wider mt-1">Tổng OEE</div></div>
-                    </div>
-                    <div class="p-6 space-y-6">
-                        <div><div class="flex justify-between items-end mb-2"><span class="text-sm font-bold text-slate-700">Availability (A)</span><span class="text-sm font-bold text-indigo-600">${A.toFixed(1)}%</span></div><div class="w-full bg-slate-100 rounded-full h-2.5"><div class="bg-indigo-500 h-2.5 rounded-full" style="width: ${A.toFixed(1)}%"></div></div></div>
-                        <div><div class="flex justify-between items-end mb-2"><span class="text-sm font-bold text-slate-700">Performance (P)</span><span class="text-sm font-bold text-blue-600">${P.toFixed(1)}%</span></div><div class="w-full bg-slate-100 rounded-full h-2.5"><div class="bg-blue-500 h-2.5 rounded-full" style="width: ${P.toFixed(1)}%"></div></div></div>
-                        <div><div class="flex justify-between items-end mb-2"><span class="text-sm font-bold text-slate-700">Quality (Q)</span><span class="text-sm font-bold text-emerald-600">${Q.toFixed(1)}%</span></div><div class="w-full bg-slate-100 rounded-full h-2.5"><div class="bg-emerald-500 h-2.5 rounded-full" style="width: ${Q.toFixed(1)}%"></div></div></div>
-                    </div>
+                <div class="${oeeBg} rounded-xl shadow-sm border p-4 flex flex-col items-center justify-center text-center">
+                    <h4 class="text-sm font-bold text-slate-700 mb-1">${cable.name}</h4>
+                    <div class="text-3xl font-black ${oeeColor}">${OEE.toFixed(1)}%</div>
+                    <div class="text-[10px] font-bold text-slate-500 uppercase mt-2 tracking-wider">A:${A.toFixed(0)}% &bull; P:${P.toFixed(0)}% &bull; Q:${Q.toFixed(0)}%</div>
                 </div>`;
         });
         tableHtml += `</div>`;
+
+        // Add Hourly Table
+        tableHtml += `
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+                    <h3 class="text-lg font-bold text-slate-800">Kết quả OEE theo giờ - Ngày ${dateStr}</h3>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs text-slate-500 uppercase bg-slate-50/50">
+                            <tr>
+                                <th class="px-6 py-4 font-semibold">Tuyến cáp</th>
+                                ${hours.map(h => `<th class="px-4 py-4 font-semibold text-center">${h}</th>`).join('')}
+                                <th class="px-6 py-4 font-bold text-indigo-600 text-center">TB Ngày</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            ${hourlyTableData.map(row => `
+                                <tr class="hover:bg-slate-50/50 transition-colors">
+                                    <td class="px-6 py-4 font-medium text-slate-700">${row.name}</td>
+                                    ${hours.map(h => {
+                                        const val = row.hourly[h];
+                                        let colorClass = 'text-slate-400';
+                                        if (val !== 'Đóng') {
+                                            const num = parseFloat(val);
+                                            colorClass = num < 75 ? 'text-rose-500' : (num >= 85 ? 'text-emerald-500' : 'text-amber-500');
+                                        }
+                                        return `<td class="px-4 py-4 text-center font-medium ${colorClass}">${val}</td>`;
+                                    }).join('')}
+                                    <td class="px-6 py-4 text-center font-bold text-indigo-600">${row.avg}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="p-4 bg-slate-50 border-t border-slate-100 flex items-center gap-6 text-xs font-medium text-slate-600">
+                    <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-emerald-500"></span> Tốt (≥ 85%)</div>
+                    <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-amber-500"></span> Khá (75% - 84%)</div>
+                    <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-rose-500"></span> Cần cải thiện (< 75%)</div>
+                </div>
+            </div>
+        `;
+
         resultsContainer.innerHTML = tableHtml;
         resultsContainer.classList.remove('hidden');
         await generateAISuggestions(oeeSummary, dateStr);
