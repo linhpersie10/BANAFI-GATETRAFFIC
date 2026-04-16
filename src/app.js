@@ -3214,6 +3214,25 @@ async function renderOEECableList() {
         `;
         container.appendChild(card);
     });
+
+    const btnCalc = document.getElementById('btn-calculate-oee');
+    if (savedData) {
+        if (btnCalc) {
+            btnCalc.disabled = true;
+            btnCalc.classList.add('opacity-50', 'cursor-not-allowed');
+            btnCalc.title = "Dữ liệu đã được lưu. Vui lòng xóa dữ liệu nếu muốn tính lại.";
+        }
+        const cacheKey = `oee_result_${dateStr}`;
+        if (!localStorage.getItem(cacheKey)) {
+            calculateOEE(dateStr, true);
+        }
+    } else {
+        if (btnCalc) {
+            btnCalc.disabled = false;
+            btnCalc.classList.remove('opacity-50', 'cursor-not-allowed');
+            btnCalc.title = "";
+        }
+    }
 }
 
 window.updateRowCapacity = function(cableIdx, segIdx) {
@@ -3256,14 +3275,13 @@ window.updateRowCapacity = function(cableIdx, segIdx) {
     }
 };
 
-document.getElementById('btn-calculate-oee')?.addEventListener('click', async () => {
-    const dateStr = document.getElementById('oee-date-picker').value;
+async function calculateOEE(dateStr, isAuto = false) {
     if (!dateStr) {
-        showNotification('Lỗi', 'Vui lòng chọn ngày tính toán', 'error');
+        if (!isAuto) showNotification('Lỗi', 'Vui lòng chọn ngày tính toán', 'error');
         return;
     }
     
-    showLoading(true, 'Đang tính toán OEE...');
+    if (!isAuto) showLoading(true, 'Đang tính toán OEE...');
 
     try {
         // 1. Lấy dữ liệu thực tế từ CACHE hoặc Firestore
@@ -3280,8 +3298,10 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
         });
         
         if (activeCables.length === 0) {
-            showNotification('Lỗi', 'Vui lòng chọn ít nhất 1 tuyến cáp để tính toán', 'error');
-            showLoading(false);
+            if (!isAuto) {
+                showNotification('Lỗi', 'Vui lòng chọn ít nhất 1 tuyến cáp để tính toán', 'error');
+                showLoading(false);
+            }
             return;
         }
 
@@ -3425,10 +3445,15 @@ document.getElementById('btn-calculate-oee')?.addEventListener('click', async ()
         localStorage.setItem(`oee_result_${dateStr}`, JSON.stringify({ tableHtml, aiHtml: document.getElementById('ai-suggestion-content').innerHTML }));
     } catch (error) {
         console.error("Lỗi tính toán OEE:", error);
-        showNotification('Lỗi', 'Có lỗi xảy ra khi tính toán OEE', 'error');
+        if (!isAuto) showNotification('Lỗi', 'Có lỗi xảy ra khi tính toán OEE', 'error');
     } finally {
-        showLoading(false);
+        if (!isAuto) showLoading(false);
     }
+}
+
+document.getElementById('btn-calculate-oee')?.addEventListener('click', async () => {
+    const dateStr = document.getElementById('oee-date-picker').value;
+    await calculateOEE(dateStr, false);
 });
 
 async function generateAISuggestions(oeeSummary, dateStr) {
@@ -3639,6 +3664,52 @@ async function generateReport() {
     }
 }
 
+function calculateDailyOEE(cable, op, gateData) {
+    if (!op || op.active === false) return null;
+    
+    const segments = op.segments || [];
+    const nominalHours = op.nominalHours || 12;
+    const actualHours = op.actualHours || 0;
+    const waitTime = op.waitTime || 0;
+
+    let A = nominalHours > 0 ? Math.min(100, (actualHours / nominalHours) * 100) : 0;
+    let totalActual = 0, totalMaxCapacity = 0;
+    const hours = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
+
+    hours.forEach(h => {
+        const hourInt = parseInt(h.split(':')[0]);
+        const hourStart = `${hourInt.toString().padStart(2, '0')}:00`;
+        const activeSeg = segments.find(s => hourStart >= s.start && hourStart < s.end);
+        
+        if (!activeSeg) return;
+
+        const capacityRatio = (activeSeg.cabins / cable.maxCabins) * (activeSeg.speed / cable.maxSpeed);
+        const totalOperatingMinutes = segments.reduce((acc, s) => {
+            if (!s.start || !s.end) return acc;
+            const [sH, sM] = s.start.split(':').map(Number), [eH, eM] = s.end.split(':').map(Number);
+            return acc + ((eH * 60 + eM) - (sH * 60 + sM));
+        }, 0);
+        const scheduledDowntimeInHour = totalOperatingMinutes > 0 ? (cable.downtime || 0) * (60 / totalOperatingMinutes) : 0;
+        const effectiveMinutesInHour = Math.max(0, 60 - scheduledDowntimeInHour);
+        const currentMaxCapacity = (cable.maxCapacity * capacityRatio) * (effectiveMinutesInHour / 60);
+        
+        let actualInHour = 0;
+        const hourlyData = gateData ? (gateData.hourly || gateData.hourlyData) : null;
+        if (hourlyData) {
+            const b1 = `${hourInt.toString().padStart(2, '0')}:00 - ${hourInt.toString().padStart(2, '0')}:30`;
+            const b2 = `${hourInt.toString().padStart(2, '0')}:30 - ${(hourInt + 1).toString().padStart(2, '0')}:00`;
+            if (hourlyData[b1]) actualInHour += Object.values(hourlyData[b1]).reduce((s, c) => s + Number(c), 0);
+            if (hourlyData[b2]) actualInHour += Object.values(hourlyData[b2]).reduce((s, c) => s + Number(c), 0);
+        }
+        totalActual += actualInHour;
+        totalMaxCapacity += currentMaxCapacity;
+    });
+
+    let P = totalMaxCapacity > 0 ? Math.min(100, (totalActual / totalMaxCapacity) * 100) : 0;
+    let Q = waitTime > 15 ? (15 / waitTime) * 100 : 100;
+    return (A / 100) * (P / 100) * (Q / 100) * 100;
+}
+
 function processReportData(trafficData, oeeData, target, type, startDate, endDate) {
     const cableConfigs = getCableConfigs().filter(c => c.enabled !== false);
     const GATE_TO_CABLE_MAP = {
@@ -3698,7 +3769,7 @@ function processReportData(trafficData, oeeData, target, type, startDate, endDat
             if (target === 'all' || target === `gate_${gate.gateName}` || 
                (target.startsWith('cable_') && GATE_TO_CABLE_MAP[gate.gateName] === cableConfigs.find(c => c.id === target.replace('cable_', ''))?.name)) {
                 
-                Object.values(gate.hourlyData).forEach(hour => {
+                Object.values(gate.hourlyData || gate.hourly || {}).forEach(hour => {
                     dayTraffic += Object.values(hour).reduce((sum, val) => sum + val, 0);
                 });
             }
@@ -3713,15 +3784,19 @@ function processReportData(trafficData, oeeData, target, type, startDate, endDat
         if (ops) {
             cableConfigs.forEach(cable => {
                 const op = ops[cable.id];
-                if (op && op.oee && specificCables.includes(cable.id)) {
-                    specificOeeData[cable.id].push(op.oee);
+                const gateName = Object.keys(GATE_TO_CABLE_MAP).find(k => GATE_TO_CABLE_MAP[k] === cable.name) || cable.name;
+                const gateData = dayTrafficData.find(d => d.gateName === gateName);
+                const calculatedOee = calculateDailyOEE(cable, op, gateData);
+                
+                if (calculatedOee !== null && specificCables.includes(cable.id)) {
+                    specificOeeData[cable.id].push(calculatedOee);
                 }
 
                 if (target === 'all' || target === `cable_${cable.id}` || 
                    (target.startsWith('gate_') && GATE_TO_CABLE_MAP[target.replace('gate_', '')] === cable.name)) {
                     
-                    if (op && op.oee) {
-                        dayOeeActualSum += op.oee;
+                    if (calculatedOee !== null) {
+                        dayOeeActualSum += calculatedOee;
                         dayOeeCount++;
                         
                         // Calculate capacities
@@ -3730,6 +3805,7 @@ function processReportData(trafficData, oeeData, target, type, startDate, endDat
                         
                         if (op.segments) {
                             op.segments.forEach(seg => {
+                                if (!seg.start || !seg.end) return;
                                 const startHour = parseInt(seg.start.split(':')[0]);
                                 const endHour = parseInt(seg.end.split(':')[0]);
                                 const hoursCount = endHour - startHour;
@@ -3745,9 +3821,7 @@ function processReportData(trafficData, oeeData, target, type, startDate, endDat
                         dayCapacityIdeal += cableCapIdeal;
                         
                         // Calculate Ideal OEE for this cable on this day
-                        // Ideal OEE = Actual Traffic / Ideal Capacity
-                        // Since we don't have per-cable traffic easily here, we use the ratio of capacities
-                        const idealOee = cableCapIdeal > 0 ? (op.oee * cableCapActual / cableCapIdeal) : 0;
+                        const idealOee = cableCapIdeal > 0 ? (calculatedOee * cableCapActual / cableCapIdeal) : 0;
                         dayOeeIdealSum += idealOee;
                     }
                 }
